@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "lib": ["ES2022"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "declaration": true,
+    "sourceMap": true,
+    "incremental": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    "paths": {
+      "@app/contracts": ["./libs/contracts/src"],
+      "@app/contracts/*": ["./libs/contracts/src/*"],
+      "@app/messaging": ["./libs/messaging/src"],
+      "@app/messaging/*": ["./libs/messaging/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "**/dist"]
+}

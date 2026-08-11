@@ -1,0 +1,17 @@
+{
+  "name": "@app/messaging",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "NATS + JetStream plumbing: connection, stream bootstrap, publisher, durable consumer.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "nats": "^2.29.0",
+    "pino": "^9.4.0"
+  }
+}

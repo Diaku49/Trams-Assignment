@@ -1,0 +1,27 @@
+{
+  "name": "@app/user-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Owns user data. Reachable only over NATS - no HTTP port.",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@app/contracts": "*",
+    "@app/messaging": "*",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "nats": "^2.29.0",
+    "pino": "^9.4.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6"
+  }
+}
