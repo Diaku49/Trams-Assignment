@@ -7,6 +7,7 @@ export const subjects = {
   userRpcGetById: 'user.rpc.get-by-id',
   userRpcUpdate: 'user.rpc.update',
   userRpcAuthenticate: 'user.rpc.authenticate',
+  
   userEvents: 'user.events',
   userCreated: 'user.created',
   userEventsDeadLetter: 'user.events.dlq',

@@ -1,4 +1,5 @@
 // Barrel file: public surface of the messaging library.
-// TODO: implement
 
-export {};
+export * from './connection';
+export * from './rpc/rpc';
+export * from './rpc/user-rpc';
