@@ -9,13 +9,16 @@ import type {
   UserCreatedEvent,
   UserResponseDto,
 } from '@app/contracts';
+
 import { UserServiceError } from '../errors/user-service.error';
+
 import type {
   CreateUserData,
   UpdateUserData,
   UserRecord,
   UserRepositoryPort,
 } from '../repositories/user.repository';
+
 import type { PasswordHasher } from '../utils/password';
 
 

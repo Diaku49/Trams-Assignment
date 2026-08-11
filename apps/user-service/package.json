@@ -12,6 +12,7 @@
     "clean": "rm -rf dist tsconfig.tsbuildinfo"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@app/contracts": "*",
     "@app/messaging": "*",
@@ -19,10 +20,12 @@
     "dotenv": "^16.4.5",
     "nats": "^2.29.0",
     "pino": "^9.4.0",
+    "pg": "^8.16.3",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^20.14.0"
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.15.6"
   }
 }
