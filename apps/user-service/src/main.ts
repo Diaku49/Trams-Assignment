@@ -62,7 +62,14 @@ export async function startUserService(): Promise<RunningUserService> {
     let shutdownPromise: Promise<void> | undefined;
 
     logger.info(
-      { subjects: ["user.rpc.create", "user.rpc.authenticate"] },
+      {
+        subjects: [
+          "user.rpc.create",
+          "user.rpc.authenticate",
+          "user.rpc.get-by-id",
+          "user.rpc.update",
+        ],
+      },
       "User Service is ready for RPC requests",
     );
 
