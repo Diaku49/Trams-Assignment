@@ -13,7 +13,9 @@
     "dev:gateway": "npm run dev -w apps/api-gateway",
     "dev:user": "npm run dev -w apps/user-service",
     "dev:notification": "npm run dev -w apps/notification-service",
-    "build": "npm run build --workspaces --if-present",
+    "prisma:generate": "prisma generate",
+    "build": "tsc -b libs/contracts libs/messaging apps/api-gateway apps/user-service apps/notification-service",
+    "clean": "npm run clean --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "lint": "eslint \"{apps,libs}/**/*.ts\"",
     "format": "prettier --write \"{apps,libs}/**/*.ts\""

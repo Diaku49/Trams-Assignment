@@ -1,4 +1,4 @@
-// NATS connection lifecycle: connect with credentials, reconnect, graceful drain.
+// One connection plus SDK-style resource clients for each service process.
 
 import {
   connect,
@@ -6,12 +6,12 @@ import {
   type ConnectionOptions,
   type NatsConnection,
 } from 'nats';
-
-export interface MessagingLogger {
-  info(bindings: Record<string, unknown>, message: string): void;
-  warn(bindings: Record<string, unknown>, message: string): void;
-  error(bindings: Record<string, unknown>, message: string): void;
-}
+import { JetStreamConsumer } from './pub-sub/consumer';
+import { JetStreamPublisher } from './pub-sub/publisher';
+import { JetStreamStreams } from './pub-sub/stream-bootstrap';
+import { RpcClient } from './rpc/rpc';
+import { UserRpcClient } from './rpc/user-rpc';
+import type { MessagingLogger } from './types';
 
 export interface NatsConnectionConfig {
   servers: string | string[];
@@ -28,9 +28,47 @@ export interface NatsConnectionConfig {
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
+export type MessagingRpcClient = RpcClient & { readonly user: UserRpcClient };
+
+/**
+ * SDK-style facade. All namespaces share exactly one underlying NATS socket.
+ */
+export class MessagingClient {
+  readonly rpc: MessagingRpcClient;
+  readonly publisher: JetStreamPublisher;
+  readonly consumer: JetStreamConsumer;
+  readonly streams: JetStreamStreams;
+
+  constructor(
+    private readonly connection: NatsConnection,
+    private readonly name: string,
+    private readonly logger?: MessagingLogger,
+  ) {
+    const rpc = new RpcClient(connection);
+    this.rpc = Object.assign(rpc, { user: new UserRpcClient(rpc) });
+    this.publisher = new JetStreamPublisher(connection);
+    this.consumer = new JetStreamConsumer(connection, logger);
+    this.streams = new JetStreamStreams(connection, logger);
+  }
+
+  isClosed(): boolean {
+    return this.connection.isClosed();
+  }
+
+  async drain(): Promise<void> {
+    if (this.connection.isClosed()) {
+      return;
+    }
+
+    this.logger?.info({ name: this.name }, 'Draining NATS connection');
+    await this.connection.drain();
+  }
+}
+
+/** Opens one long-lived connection and returns its SDK-style client facade. */
 export async function connectNats(
   config: NatsConnectionConfig,
-): Promise<NatsConnection> {
+): Promise<MessagingClient> {
   const connection = await connect({
     servers: config.servers,
     name: config.name,
@@ -51,7 +89,6 @@ export async function connectNats(
   );
 
   void watchNatsStatus(connection, config.name, config.logger);
-
   void connection.closed().then((error) => {
     if (error) {
       config.logger?.error(
@@ -64,7 +101,7 @@ export async function connectNats(
     config.logger?.info({ name: config.name }, 'NATS connection closed');
   });
 
-  return connection;
+  return new MessagingClient(connection, config.name, config.logger);
 }
 
 async function watchNatsStatus(
@@ -98,17 +135,4 @@ async function watchNatsStatus(
       'NATS status observer stopped unexpectedly',
     );
   }
-}
-
-export async function drainNats(
-  connection: NatsConnection,
-  name: string,
-  logger?: MessagingLogger,
-): Promise<void> {
-  if (connection.isClosed()) {
-    return;
-  }
-
-  logger?.info({ name }, 'Draining NATS connection');
-  await connection.drain();
 }

@@ -1,12 +1,12 @@
-// Core-NATS request/reply helpers for the Gateway-to-User-Service hop.
+// Generic Core-NATS request/reply client.
 
 import {
   ErrorCode,
   JSONCodec,
   NatsError,
   type NatsConnection,
+  type Subscription,
 } from 'nats';
-import type { ZodTypeAny } from 'zod';
 
 const codec = JSONCodec<unknown>();
 const DEFAULT_RPC_TIMEOUT_MS = 3_000;
@@ -30,89 +30,102 @@ export class RpcError extends Error {
 }
 
 export interface RpcOptions {
-  /** Maximum time to wait for the User Service reply. Defaults to 3 seconds. */
   timeoutMs?: number;
 }
 
-export function validate<TSchema extends ZodTypeAny>(
-  schema: TSchema,
-  value: unknown,
-  errorCode: 'INVALID_REQUEST' | 'INVALID_RESPONSE',
-): TSchema['_output'] {
-  const result = schema.safeParse(value);
+export type RpcHandler = (payload: unknown) => Promise<unknown> | unknown;
 
-  if (!result.success) {
-    throw new RpcError(
-      errorCode === 'INVALID_REQUEST'
-        ? 'RPC request does not match its contract'
-        : 'User Service RPC reply does not match its contract',
-      errorCode,
-      result.error.flatten(),
-    );
-  }
-
-  return result.data;
+export interface RpcResponderOptions {
+  onError?: (error: unknown) => void;
 }
 
-function timeoutFrom(options: RpcOptions): number {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
+export class RpcClient {
+  constructor(private readonly connection: NatsConnection) {}
 
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new RpcError(
-      'RPC timeout must be a positive integer in milliseconds',
-      'INVALID_REQUEST',
-    );
-  }
+  async request(
+    subject: string,
+    payload: unknown,
+    options: RpcOptions = {},
+  ): Promise<unknown> {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
 
-  return timeoutMs;
-}
-
-export async function requestUserService(
-  connection: NatsConnection,
-  subject: string,
-  payload: unknown,
-  options: RpcOptions,
-): Promise<unknown> {
-  try {
-    // NATS creates a private reply inbox and resolves with the first response.
-    const reply = await connection.request(subject, codec.encode(payload), {
-      timeout: timeoutFrom(options),
-    });
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new RpcError(
+        'RPC timeout must be a positive integer in milliseconds',
+        'INVALID_REQUEST',
+      );
+    }
 
     try {
-      return codec.decode(reply.data);
+      const reply = await this.connection.request(subject, codec.encode(payload), {
+        timeout: timeoutMs,
+      });
+
+      try {
+        return codec.decode(reply.data);
+      } catch (error) {
+        throw new RpcError(
+          'RPC reply is not valid JSON',
+          'INVALID_RESPONSE',
+          error instanceof Error ? error.message : null,
+        );
+      }
     } catch (error) {
+      if (error instanceof RpcError) {
+        throw error;
+      }
+
+      if (error instanceof NatsError) {
+        if (error.code === ErrorCode.NoResponders) {
+          throw new RpcError(
+            'No service is currently handling this RPC subject',
+            'NO_RESPONDERS',
+          );
+        }
+
+        if (error.code === ErrorCode.Timeout) {
+          throw new RpcError(
+            'The service did not respond before the RPC timeout',
+            'TIMEOUT',
+          );
+        }
+      }
+
       throw new RpcError(
-        'User Service RPC reply is not valid JSON',
-        'INVALID_RESPONSE',
+        'NATS RPC request failed',
+        'TRANSPORT_ERROR',
         error instanceof Error ? error.message : null,
       );
     }
-  } catch (error) {
-    if (error instanceof RpcError) {
-      throw error;
+  }
+  
+  respond(
+    subject: string,
+    handler: RpcHandler,
+    options: RpcResponderOptions = {},
+  ): Subscription {
+    return this.connection.subscribe(subject, {
+      callback: (subscriptionError, message) => {
+        if (subscriptionError) {
+          options.onError?.(subscriptionError);
+          return;
+        }
+
+        void this.respondToMessage(message, handler, options.onError);
+      },
+    });
+  }
+
+  private async respondToMessage(
+    message: { data: Uint8Array; respond(payload?: Uint8Array): boolean },
+    handler: RpcHandler,
+    onError?: (error: unknown) => void,
+  ): Promise<void> {
+    try {
+      const response = await handler(codec.decode(message.data));
+      message.respond(codec.encode(response));
+    } catch (error) {
+      onError?.(error);
     }
-
-    if (error instanceof NatsError) {
-      if (error.code === ErrorCode.NoResponders) {
-        throw new RpcError(
-          'User Service has no active handler for this request',
-          'NO_RESPONDERS',
-        );
-      }
-
-      if (error.code === ErrorCode.Timeout) {
-        throw new RpcError(
-          'User Service did not respond before the RPC timeout',
-          'TIMEOUT',
-        );
-      }
-    }
-
-    throw new RpcError(
-      'NATS request to User Service failed',
-      'TRANSPORT_ERROR',
-      error instanceof Error ? error.message : null,
-    );
   }
 }

@@ -1,4 +1,4 @@
-// User Service RPC operations
+// Typed User Service operations built on the generic RPC client.
 
 import {
   authenticatedUserSchema,
@@ -11,40 +11,57 @@ import {
   type LoginDto,
   type UserResponseDto,
 } from '@app/contracts';
-import type { NatsConnection } from 'nats';
-import { requestUserService, type RpcOptions, validate } from './rpc';
+import type { ZodTypeAny } from 'zod';
+import { RpcClient, RpcError, type RpcOptions } from './rpc';
 
+export class UserRpcClient {
+  constructor(private readonly rpc: RpcClient) {}
 
-// Sends a signup request to User Service and validates
-export async function signUp(
-  connection: NatsConnection,
-  input: CreateUserDto,
-  options: RpcOptions = {},
-): Promise<UserResponseDto> {
-  const request = validate(createUserDtoSchema, input, 'INVALID_REQUEST');
-  const reply = await requestUserService(
-    connection,
-    subjects.userRpcCreate,
-    request,
-    options,
-  );
+  async signUp(
+    input: CreateUserDto,
+    options: RpcOptions = {},
+  ): Promise<UserResponseDto> {
+    const request = validate(createUserDtoSchema, input, 'INVALID_REQUEST');
+    const reply = await this.rpc.request(
+      subjects.userRpcCreate,
+      request,
+      options,
+    );
 
-  return validate(userResponseDtoSchema, reply, 'INVALID_RESPONSE');
+    return validate(userResponseDtoSchema, reply, 'INVALID_RESPONSE');
+  }
+
+  async login(
+    input: LoginDto,
+    options: RpcOptions = {},
+  ): Promise<AuthenticatedUser> {
+    const request = validate(loginDtoSchema, input, 'INVALID_REQUEST');
+    const reply = await this.rpc.request(
+      subjects.userRpcAuthenticate,
+      request,
+      options,
+    );
+
+    return validate(authenticatedUserSchema, reply, 'INVALID_RESPONSE');
+  }
 }
 
-// Sends a login request to User Service
-export async function login(
-  connection: NatsConnection,
-  input: LoginDto,
-  options: RpcOptions = {},
-): Promise<AuthenticatedUser> {
-  const request = validate(loginDtoSchema, input, 'INVALID_REQUEST');
-  const reply = await requestUserService(
-    connection,
-    subjects.userRpcAuthenticate,
-    request,
-    options,
-  );
+function validate<TSchema extends ZodTypeAny>(
+  schema: TSchema,
+  value: unknown,
+  errorCode: 'INVALID_REQUEST' | 'INVALID_RESPONSE',
+): TSchema['_output'] {
+  const result = schema.safeParse(value);
 
-  return validate(authenticatedUserSchema, reply, 'INVALID_RESPONSE');
+  if (!result.success) {
+    throw new RpcError(
+      errorCode === 'INVALID_REQUEST'
+        ? 'RPC request does not match its contract'
+        : 'RPC reply does not match its contract',
+      errorCode,
+      result.error.flatten(),
+    );
+  }
+
+  return result.data;
 }
