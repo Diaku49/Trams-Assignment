@@ -20,8 +20,14 @@ export interface CreateUserData {
 export interface UpdateUserData {
   email?: string;
   passwordHash?: string;
-  /** `null` clears the display name; `undefined` leaves it unchanged. */
   name?: string | null;
+}
+
+export interface UserRepositoryPort {
+  createUser(data: CreateUserData): Promise<UserRecord>;
+  getUser(id: string): Promise<UserRecord | null>;
+  getUserByEmail(email: string): Promise<UserRecord | null>;
+  updateUser(id: string, data: UpdateUserData): Promise<UserRecord>;
 }
 
 export type UserDatabase = Pick<PrismaClient, 'user'>;
@@ -35,11 +41,8 @@ const userSelect = {
   updatedAt: true,
 } as const;
 
-/**
- * Persistence seam used by the future UserService. It accepts only the Prisma
- * delegate it needs, which also makes it straightforward to replace in tests.
- */
-export class UserRepository {
+
+export class UserRepository implements UserRepositoryPort {
   constructor(private readonly database: UserDatabase) {}
 
   async createUser(data: CreateUserData): Promise<UserRecord> {
@@ -53,7 +56,6 @@ export class UserRepository {
     });
   }
 
-  /** Returns `null` when no user exists with this id. */
   async getUser(id: string): Promise<UserRecord | null> {
     return this.database.user.findUnique({
       where: { id },
@@ -61,7 +63,6 @@ export class UserRepository {
     });
   }
 
-  /** Used by login. Email has a unique database constraint. */
   async getUserByEmail(email: string): Promise<UserRecord | null> {
     return this.database.user.findUnique({
       where: { email },
