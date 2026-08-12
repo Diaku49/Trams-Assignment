@@ -22,7 +22,7 @@ API contract.
 Docker Compose is the easiest way to run the complete environment. It starts
 PostgreSQL, creates the Notification Service database, generates development
 TLS certificates, starts NATS with JetStream, applies both Prisma migration
-histories, and starts all three services.
+histories, provisions the `USER_EVENTS` stream, and starts all three services.
 
 ```bash
 docker compose up --build
@@ -96,19 +96,19 @@ For a native TLS-enabled NATS server, generate local-only certificates once:
 ```
 
 Point `NATS_TLS_CA_FILE`, `NATS_TLS_CERT_FILE`, and `NATS_TLS_KEY_FILE` at the
-generated files. Start PostgreSQL and NATS separately, apply migrations, then
-run the services:
+generated files. Start PostgreSQL and NATS separately, then run:
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate:deploy
 npm run dev
 ```
 
-`npm run dev` runs Gateway, User Service, and Notification Service together.
-Use `npm run dev:gateway`, `npm run dev:user`, or `npm run dev:notification`
-to run one process. The User and Notification services have no HTTP port; they
-need their database and NATS connection before they can start.
+`npm run dev` applies both migration histories, provisions `USER_EVENTS` with
+the User Service NATS account, then starts Gateway, User Service, and
+Notification Service together. Use `npm run dev:gateway`, `npm run dev:user`,
+or `npm run dev:notification` only after those prerequisites have completed.
+The User and Notification services have no HTTP port; they need their database
+and NATS connection before they can start.
 
 ## Prisma migrations
 
@@ -127,9 +127,12 @@ npm run prisma:migrate:deploy
 ```
 
 Compose runs these commands in its one-off `migrate` service before starting
-the application services. For schema changes, create and review a migration in
-the schema's owning service, commit it, then use `prisma:migrate:deploy` in
-other environments. Do not let one service access the other service's tables.
+the application services. Its separate `jetstream-bootstrap` service creates
+or reconciles `USER_EVENTS` before either the User Service publisher or
+Notification Service consumer starts. For schema changes, create and review a
+migration in the schema's owning service, commit it, then use
+`prisma:migrate:deploy` in other environments. Do not let one service access
+the other service's tables.
 
 ## Commands and testing
 
@@ -139,6 +142,7 @@ npm test                       # Run workspace test scripts
 npm run lint                   # ESLint over app and library TypeScript
 npm run format                 # Format TypeScript with Prettier
 npm run clean                  # Remove generated build output
+npm run jetstream:bootstrap    # Create/reconcile USER_EVENTS (NATS env required)
 npm run dlq:inspect            # Inspect user.events.dlq (NATS env required)
 npm run dlq:replay -- 42       # Dry-run replay of DLQ stream sequence 42
 npm run dlq:replay -- 42 --execute

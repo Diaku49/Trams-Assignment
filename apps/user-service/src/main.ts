@@ -7,7 +7,6 @@ import {
 import type { Subscription } from "nats";
 import pino from "pino";
 import { config } from "./config/env";
-import { userEventsStream } from "./events/user-events.stream";
 import { PrismaClient } from "./generated/prisma/client";
 import { registerUserRpcRoutes } from "./handlers/user.handlers";
 import { OutboxRelay } from "./outbox/outbox.relay";
@@ -50,7 +49,6 @@ export async function startUserService(): Promise<RunningUserService> {
       logger,
     });
     messaging = connectedMessaging;
-    await connectedMessaging.streams.ensure(userEventsStream);
 
     // Initialize the service components
     const repository = new UserRepository(prisma);

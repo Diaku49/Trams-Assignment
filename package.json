@@ -9,16 +9,17 @@
     "libs/*"
   ],
   "scripts": {
-    "dev": "concurrently -n gateway,user,notification -c blue,green,magenta \"npm:dev:gateway\" \"npm:dev:user\" \"npm:dev:notification\"",
+    "dev": "npm run prisma:migrate:deploy && npm run jetstream:bootstrap && concurrently -n gateway,user,notification -c blue,green,magenta \"npm:dev:gateway\" \"npm:dev:user\" \"npm:dev:notification\"",
     "dev:gateway": "npm run dev -w apps/api-gateway",
     "dev:user": "npm run dev -w apps/user-service",
     "dev:notification": "npm run dev -w apps/notification-service",
     "prisma:generate": "prisma generate && npm run prisma:generate -w apps/notification-service",
     "prisma:migrate:deploy": "prisma migrate deploy && npm run prisma:migrate:deploy -w apps/notification-service",
+    "jetstream:bootstrap": "tsx scripts/jetstream-bootstrap.ts",
     "build": "tsc -b libs/contracts libs/messaging apps/api-gateway apps/user-service apps/notification-service",
     "clean": "npm run clean --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "lint": "eslint \"{apps,libs}/**/*.ts\"",
+    "lint": "eslint \"{apps,libs,scripts}/**/*.ts\"",
     "format": "prettier --write \"{apps,libs}/**/*.ts\"",
     "dlq:inspect": "tsx scripts/user-events-dlq.ts inspect",
     "dlq:replay": "tsx scripts/user-events-dlq.ts replay"

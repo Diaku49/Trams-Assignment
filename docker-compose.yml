@@ -86,6 +86,23 @@ services:
     command: ["npm", "run", "prisma:migrate:deploy"]
     restart: "no"
 
+  jetstream-bootstrap:
+    build:
+      context: .
+      target: build
+    environment:
+      NATS_URL: tls://nats:4222
+      NATS_USER: user-service
+      NATS_PASSWORD: user-service-local-password
+      NATS_TLS_CA_FILE: /certs/ca.pem
+    depends_on:
+      nats:
+        condition: service_healthy
+    command: ["npm", "run", "jetstream:bootstrap"]
+    volumes:
+      - nats-client-ca:/certs:ro
+    restart: "no"
+
   user-service:
     build:
       context: .
@@ -107,8 +124,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      nats:
-        condition: service_healthy
+      jetstream-bootstrap:
+        condition: service_completed_successfully
     command: ["npm", "run", "start", "-w", "apps/user-service"]
     volumes:
       - nats-client-ca:/certs:ro
@@ -131,8 +148,10 @@ services:
       NOTIFICATION_MAX_ACK_PENDING: 10
       NOTIFICATION_DELIVERY_LEASE_MS: 60000
     depends_on:
-      nats:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      jetstream-bootstrap:
+        condition: service_completed_successfully
     command: ["npm", "run", "start", "-w", "apps/notification-service"]
     volumes:
       - nats-client-ca:/certs:ro

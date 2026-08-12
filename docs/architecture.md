@@ -41,6 +41,12 @@ has one replica, so this local stack is not broker-highly-available. User
 Service RPC _is_ horizontally scalable: every replica subscribes to the same
 subjects in the same queue group, and NATS selects one replica for each request.
 
+Compose provisions dependencies deterministically: its `migrate` job applies
+both database migration histories, and its `jetstream-bootstrap` job creates or
+reconciles `USER_EVENTS` using the User Service NATS account. User Service and
+Notification Service wait for both jobs to complete successfully, so neither
+publishes to nor consumes from a stream that has not been created.
+
 ## Request/reply flow
 
 For `POST /api/auth/signup`, the Gateway validates the request, passes it to
