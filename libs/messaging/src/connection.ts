@@ -10,7 +10,6 @@ import { JetStreamConsumer } from './pub-sub/consumer';
 import { JetStreamPublisher } from './pub-sub/publisher';
 import { JetStreamStreams } from './pub-sub/stream-bootstrap';
 import { RpcClient } from './rpc/rpc';
-import { UserRpcClient } from './rpc/user-rpc';
 import type { MessagingLogger } from './types';
 
 export interface NatsConnectionConfig {
@@ -28,13 +27,9 @@ export interface NatsConnectionConfig {
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
-export type MessagingRpcClient = RpcClient & { readonly user: UserRpcClient };
-
-/**
- * SDK-style facade. All namespaces share exactly one underlying NATS socket.
- */
+/** Transport-only facade. All namespaces share exactly one underlying NATS socket. */
 export class MessagingClient {
-  readonly rpc: MessagingRpcClient;
+  readonly rpc: RpcClient;
   readonly publisher: JetStreamPublisher;
   readonly consumer: JetStreamConsumer;
   readonly streams: JetStreamStreams;
@@ -44,8 +39,7 @@ export class MessagingClient {
     private readonly name: string,
     private readonly logger?: MessagingLogger,
   ) {
-    const rpc = new RpcClient(connection);
-    this.rpc = Object.assign(rpc, { user: new UserRpcClient(rpc) });
+    this.rpc = new RpcClient(connection);
     this.publisher = new JetStreamPublisher(connection);
     this.consumer = new JetStreamConsumer(connection, logger);
     this.streams = new JetStreamStreams(connection, logger);

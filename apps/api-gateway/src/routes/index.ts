@@ -1,12 +1,30 @@
 // Mounts all route modules onto the Express router.
 
-import { Router } from 'express';
-import { userRoutes } from './user.routes';
+import { Router } from "express";
+import type { AuthController } from "../controllers/auth.controller";
+import type { UserController } from "../controllers/user.controller";
+import type { JwtTokenService } from "../utils/jwt";
+import { createAuthRouter } from "./auth.routes";
+import { createUserRouter } from "./user.routes";
 
-export const routes = Router();
+export interface GatewayRoutes {
+  auth: AuthController;
+  users: UserController;
+  tokens: JwtTokenService;
+}
 
-routes.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+export function createRoutes(dependencies: GatewayRoutes): Router {
+  const routes = Router();
 
-routes.use('/users', userRoutes);
+  routes.get("/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  routes.use("/auth", createAuthRouter(dependencies.auth));
+  routes.use(
+    "/users",
+    createUserRouter(dependencies.users, dependencies.tokens),
+  );
+
+  return routes;
+}

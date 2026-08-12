@@ -1,9 +1,29 @@
 // /users route wiring.
 
-import { Router } from 'express';
-import { getUser } from '../controllers/user.controller';
+import { getUserRequestSchema, updateUserDtoSchema } from "@app/contracts";
+import { Router } from "express";
+import type { UserController } from "../controllers/user.controller";
+import { requireAuth } from "../middleware/auth.middleware";
+import {
+  validateBody,
+  validateParams,
+} from "../middleware/validate.middleware";
+import type { JwtTokenService } from "../utils/jwt";
 
-export const userRoutes = Router();
+export function createUserRouter(
+  controller: UserController,
+  tokens: JwtTokenService,
+): Router {
+  const router = Router();
 
-userRoutes.get('/:id', getUser);
-userRoutes.put("/:id", updateUser);
+  router.use(requireAuth(tokens));
+  router.get("/:id", validateParams(getUserRequestSchema), controller.getUser);
+  router.put(
+    "/:id",
+    validateParams(getUserRequestSchema),
+    validateBody(updateUserDtoSchema),
+    controller.updateUser,
+  );
+
+  return router;
+}

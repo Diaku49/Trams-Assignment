@@ -1,9 +1,9 @@
 {
-  "name": "@app/messaging",
+  "name": "@app/user-client",
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "NATS + JetStream plumbing: connection, stream bootstrap, publisher, durable consumer.",
+  "description": "Typed client for the User Service's NATS RPC surface. Depends on @app/messaging; @app/messaging must never depend on this.",
   "main": "dist/index.js",
   "types": "src/index.ts",
   "scripts": {
@@ -11,6 +11,8 @@
     "clean": "rm -rf dist tsconfig.tsbuildinfo"
   },
   "dependencies": {
-    "nats": "^2.29.0"
+    "@app/contracts": "*",
+    "@app/messaging": "*",
+    "zod": "^3.25.76"
   }
 }

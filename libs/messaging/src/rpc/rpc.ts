@@ -125,7 +125,7 @@ export class RpcClient {
   private async respondToMessage(
     message: { data: Uint8Array; respond(payload?: Uint8Array): boolean },
     handler: RpcHandler,
-    onError?: (error: unknown) => void,
+    onError?: (error: unknown) => unknown,
   ): Promise<void> {
     try {
       const response = await handler(codec.decode(message.data));

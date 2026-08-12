@@ -1,13 +1,13 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "composite": true,
     "rootDir": "src",
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
   "references": [
-    { "path": "../../libs/contracts" },
-    { "path": "../../libs/messaging" },
-    { "path": "../../libs/user-client" }
+    { "path": "../contracts" },
+    { "path": "../messaging" }
   ]
 }

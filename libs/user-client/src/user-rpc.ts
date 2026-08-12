@@ -18,8 +18,8 @@ import {
   type UpdateUserRequest,
   type UserResponseDto,
 } from "@app/contracts";
+import { RpcClient, RpcError, type RpcOptions } from "@app/messaging";
 import type { ZodTypeAny } from "zod";
-import { RpcClient, RpcError, type RpcOptions } from "./rpc";
 
 export class UserRpcClient {
   constructor(private readonly rpc: RpcClient) {}
