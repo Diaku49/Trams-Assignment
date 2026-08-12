@@ -10,6 +10,8 @@ generated/
 .env
 .env.local
 .env.*.local
+infra/nats/certs/*
+!infra/nats/certs/.gitkeep
 
 # logs
 *.log

@@ -28,6 +28,7 @@ export async function startNotificationService(): Promise<RunningNotificationSer
     name: "notification-service",
     user: config.nats.user,
     password: config.nats.password,
+    tls: config.nats.tls,
     logger,
   });
 

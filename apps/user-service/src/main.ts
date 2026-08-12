@@ -46,6 +46,7 @@ export async function startUserService(): Promise<RunningUserService> {
       name: "user-service",
       user: config.nats.user,
       password: config.nats.password,
+      tls: config.nats.tls,
       logger,
     });
     messaging = connectedMessaging;
@@ -64,6 +65,7 @@ export async function startUserService(): Promise<RunningUserService> {
     const subscriptions = registerUserRpcRoutes(
       connectedMessaging.nats,
       users,
+      config.rpcQueueGroup,
       logger,
     );
     runningOutboxRelay.start();
@@ -71,6 +73,7 @@ export async function startUserService(): Promise<RunningUserService> {
 
     logger.info(
       {
+        queueGroup: config.rpcQueueGroup,
         subjects: [
           "user.rpc.create",
           "user.rpc.authenticate",

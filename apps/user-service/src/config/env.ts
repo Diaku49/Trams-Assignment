@@ -8,10 +8,14 @@ export interface UserServiceConfig {
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
   databaseUrl: string;
   passwordSaltRounds: number;
+  rpcQueueGroup: string;
   nats: {
     url: string;
     user: string;
     password: string;
+    tls: {
+      caFile: string;
+    };
   };
 }
 
@@ -24,9 +28,11 @@ const schema = z.object({
     .default("info"),
   DATABASE_URL: z.string().url(),
   PASSWORD_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+  USER_SERVICE_QUEUE_GROUP: z.string().trim().min(1).default("user-service"),
   NATS_URL: z.string().min(1),
   NATS_USER: z.string().min(1),
   NATS_PASSWORD: z.string().min(1),
+  NATS_TLS_CA_FILE: z.string().trim().min(1),
 });
 
 function loadEnv(): UserServiceConfig {
@@ -45,10 +51,14 @@ function loadEnv(): UserServiceConfig {
     logLevel: env.LOG_LEVEL,
     databaseUrl: env.DATABASE_URL,
     passwordSaltRounds: env.PASSWORD_SALT_ROUNDS,
+    rpcQueueGroup: env.USER_SERVICE_QUEUE_GROUP,
     nats: {
       url: env.NATS_URL,
       user: env.NATS_USER,
       password: env.NATS_PASSWORD,
+      tls: {
+        caFile: env.NATS_TLS_CA_FILE,
+      },
     },
   };
 }

@@ -9,6 +9,9 @@ export interface NotificationServiceConfig {
     url: string;
     user: string;
     password: string;
+    tls: {
+      caFile: string;
+    };
   };
   consumer: {
     durableName: string;
@@ -25,6 +28,7 @@ const schema = z.object({
   NATS_URL: z.string().min(1),
   NATS_USER: z.string().min(1),
   NATS_PASSWORD: z.string().min(1),
+  NATS_TLS_CA_FILE: z.string().trim().min(1),
   NOTIFICATION_DURABLE_NAME: z
     .string()
     .trim()
@@ -52,6 +56,9 @@ function loadEnv(): NotificationServiceConfig {
       url: env.NATS_URL,
       user: env.NATS_USER,
       password: env.NATS_PASSWORD,
+      tls: {
+        caFile: env.NATS_TLS_CA_FILE,
+      },
     },
     consumer: {
       durableName: env.NOTIFICATION_DURABLE_NAME,

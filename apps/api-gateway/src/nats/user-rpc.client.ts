@@ -33,6 +33,9 @@ export interface GatewayNatsConfig {
   url: string;
   user: string;
   password: string;
+  tls: {
+    caFile: string;
+  };
 }
 
 export type UserRpcErrorCode =
@@ -82,6 +85,7 @@ export function connectGatewayNats(
     name: "api-gateway",
     user: config.user,
     password: config.password,
+    tls: config.tls,
     logger,
   });
 }

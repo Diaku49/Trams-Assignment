@@ -42,10 +42,12 @@ export interface UserRpcOperations {
 export function registerUserRpcRoutes(
   connection: NatsConnection,
   users: UserRpcOperations,
+  queueGroup: string,
   logger?: MessagingLogger,
 ): Subscription[] {
   return [
     connection.subscribe(subjects.userRpcCreate, {
+      queue: queueGroup,
       callback: (error, message) => {
         if (error) {
           logSubscriptionError(logger, subjects.userRpcCreate, error);
@@ -55,6 +57,7 @@ export function registerUserRpcRoutes(
       },
     }),
     connection.subscribe(subjects.userRpcAuthenticate, {
+      queue: queueGroup,
       callback: (error, message) => {
         if (error) {
           logSubscriptionError(logger, subjects.userRpcAuthenticate, error);
@@ -64,6 +67,7 @@ export function registerUserRpcRoutes(
       },
     }),
     connection.subscribe(subjects.userRpcGetById, {
+      queue: queueGroup,
       callback: (error, message) => {
         if (error) {
           logSubscriptionError(logger, subjects.userRpcGetById, error);
@@ -73,6 +77,7 @@ export function registerUserRpcRoutes(
       },
     }),
     connection.subscribe(subjects.userRpcUpdate, {
+      queue: queueGroup,
       callback: (error, message) => {
         if (error) {
           logSubscriptionError(logger, subjects.userRpcUpdate, error);
