@@ -1,0 +1,161 @@
+name: trams
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: trams
+      POSTGRES_USER: trams
+      POSTGRES_PASSWORD: trams
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trams -d trams"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  nats-certs:
+    image: alpine:3.20
+    volumes:
+      - nats-server-certs:/certs
+      - nats-client-ca:/client-ca
+      - ./infra/nats/generate-container-certs.sh:/scripts/generate-container-certs.sh:ro
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "apk add --no-cache openssl >/dev/null && /scripts/generate-container-certs.sh",
+      ]
+    restart: "no"
+
+  nats:
+    image: nats:2.10-alpine
+    depends_on:
+      nats-certs:
+        condition: service_completed_successfully
+    environment:
+      GATEWAY_NATS_USER: gateway
+      GATEWAY_NATS_PASSWORD: gateway-local-password
+      USER_SERVICE_NATS_USER: user-service
+      USER_SERVICE_NATS_PASSWORD: user-service-local-password
+      NOTIFICATION_SERVICE_NATS_USER: notification-service
+      NOTIFICATION_SERVICE_NATS_PASSWORD: notification-service-local-password
+      NATS_TLS_CERT_FILE: /certs/nats-server.pem
+      NATS_TLS_KEY_FILE: /certs/nats-server-key.pem
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - ./infra/nats/nats-server.conf:/etc/nats/nats-server.conf:ro
+      - nats-data:/data
+      - nats-server-certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  migrate:
+    build:
+      context: .
+      target: build
+    environment:
+      DATABASE_URL: postgresql://trams:trams@postgres:5432/trams?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+
+  user-service:
+    build:
+      context: .
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://trams:trams@postgres:5432/trams?schema=public
+      PASSWORD_SALT_ROUNDS: 10
+      USER_SERVICE_QUEUE_GROUP: user-service
+      NATS_URL: tls://nats:4222
+      NATS_USER: user-service
+      NATS_PASSWORD: user-service-local-password
+      NATS_TLS_CA_FILE: /certs/ca.pem
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    command: ["npm", "run", "start", "-w", "apps/user-service"]
+    volumes:
+      - nats-client-ca:/certs:ro
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: .
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: info
+      NATS_URL: tls://nats:4222
+      NATS_USER: notification-service
+      NATS_PASSWORD: notification-service-local-password
+      NATS_TLS_CA_FILE: /certs/ca.pem
+      NOTIFICATION_DURABLE_NAME: notification-user-created
+      NOTIFICATION_MAX_DELIVER: 5
+      NOTIFICATION_ACK_WAIT_MS: 30000
+      NOTIFICATION_MAX_ACK_PENDING: 10
+    depends_on:
+      nats:
+        condition: service_healthy
+    command: ["npm", "run", "start", "-w", "apps/notification-service"]
+    volumes:
+      - nats-client-ca:/certs:ro
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: info
+      GATEWAY_PORT: 3000
+      JWT_SECRET: local-development-secret-change-this-before-production
+      JWT_EXPIRES_IN: 15m
+      CORS_ORIGINS: http://localhost:3000
+      NATS_URL: tls://nats:4222
+      NATS_USER: gateway
+      NATS_PASSWORD: gateway-local-password
+      NATS_TLS_CA_FILE: /certs/ca.pem
+    depends_on:
+      nats:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    command: ["npm", "run", "start", "-w", "apps/api-gateway"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - nats-client-ca:/certs:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:3000/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  nats-data:
+  nats-server-certs:
+  nats-client-ca:
