@@ -59,6 +59,7 @@ export async function startUserService(): Promise<RunningUserService> {
       new OutboxRepository(prisma),
       connectedMessaging.publisher,
       logger,
+      config.outbox,
     );
     outboxRelay = runningOutboxRelay;
     const users = new UserService(repository, passwords);

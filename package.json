@@ -19,7 +19,9 @@
     "clean": "npm run clean --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "lint": "eslint \"{apps,libs}/**/*.ts\"",
-    "format": "prettier --write \"{apps,libs}/**/*.ts\""
+    "format": "prettier --write \"{apps,libs}/**/*.ts\"",
+    "dlq:inspect": "tsx scripts/user-events-dlq.ts inspect",
+    "dlq:replay": "tsx scripts/user-events-dlq.ts replay"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

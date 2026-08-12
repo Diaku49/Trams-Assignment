@@ -95,6 +95,11 @@ services:
       DATABASE_URL: postgresql://trams:trams@postgres:5432/trams?schema=public
       PASSWORD_SALT_ROUNDS: 10
       USER_SERVICE_QUEUE_GROUP: user-service
+      OUTBOX_PUBLISHED_RETENTION_MS: 604800000
+      OUTBOX_CLEANUP_INTERVAL_MS: 3600000
+      OUTBOX_CLEANUP_BATCH_SIZE: 500
+      OUTBOX_CLEANUP_MAX_BATCHES: 20
+      OUTBOX_METRICS_INTERVAL_MS: 60000
       NATS_URL: tls://nats:4222
       NATS_USER: user-service
       NATS_PASSWORD: user-service-local-password
@@ -162,7 +167,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"fetch('http://localhost:3000/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+          'node -e "fetch(''http://localhost:3000/api/health'').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"',
         ]
       interval: 5s
       timeout: 3s

@@ -7,12 +7,31 @@ import type { ClaimedOutboxEvent, OutboxStore } from "./outbox.repository";
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_BATCH_SIZE = 10;
 const DEFAULT_LOCK_TIMEOUT_MS = 30_000;
+const DEFAULT_PUBLISHED_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
+const DEFAULT_CLEANUP_BATCH_SIZE = 500;
+const DEFAULT_CLEANUP_MAX_BATCHES = 20;
+const DEFAULT_METRICS_INTERVAL_MS = 60_000;
 const MAX_RETRY_DELAY_MS = 60_000;
 
 export interface OutboxRelayConfig {
   pollIntervalMs?: number;
   batchSize?: number;
   lockTimeoutMs?: number;
+  publishedRetentionMs?: number;
+  cleanupIntervalMs?: number;
+  cleanupBatchSize?: number;
+  cleanupMaxBatches?: number;
+  metricsIntervalMs?: number;
+}
+
+interface OutboxRelayCounters {
+  claimed: number;
+  published: number;
+  publishFailures: number;
+  cleanupRuns: number;
+  cleanupDeleted: number;
+  cleanupFailures: number;
 }
 
 export class OutboxRelay {
@@ -20,6 +39,19 @@ export class OutboxRelay {
   private readonly pollIntervalMs: number;
   private readonly batchSize: number;
   private readonly lockTimeoutMs: number;
+  private readonly publishedRetentionMs: number;
+  private readonly cleanupIntervalMs: number;
+  private readonly cleanupBatchSize: number;
+  private readonly cleanupMaxBatches: number;
+  private readonly metricsIntervalMs: number;
+  private readonly counters: OutboxRelayCounters = {
+    claimed: 0,
+    published: 0,
+    publishFailures: 0,
+    cleanupRuns: 0,
+    cleanupDeleted: 0,
+    cleanupFailures: 0,
+  };
   private abortController?: AbortController;
   private task?: Promise<void>;
 
@@ -41,6 +73,26 @@ export class OutboxRelay {
       config.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS,
       "lockTimeoutMs",
     );
+    this.publishedRetentionMs = positiveInteger(
+      config.publishedRetentionMs ?? DEFAULT_PUBLISHED_RETENTION_MS,
+      "publishedRetentionMs",
+    );
+    this.cleanupIntervalMs = positiveInteger(
+      config.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS,
+      "cleanupIntervalMs",
+    );
+    this.cleanupBatchSize = positiveInteger(
+      config.cleanupBatchSize ?? DEFAULT_CLEANUP_BATCH_SIZE,
+      "cleanupBatchSize",
+    );
+    this.cleanupMaxBatches = positiveInteger(
+      config.cleanupMaxBatches ?? DEFAULT_CLEANUP_MAX_BATCHES,
+      "cleanupMaxBatches",
+    );
+    this.metricsIntervalMs = positiveInteger(
+      config.metricsIntervalMs ?? DEFAULT_METRICS_INTERVAL_MS,
+      "metricsIntervalMs",
+    );
   }
 
   start(): void {
@@ -49,8 +101,22 @@ export class OutboxRelay {
     }
 
     this.abortController = new AbortController();
-    this.task = this.run(this.abortController.signal);
-    this.logger?.info({ workerId: this.workerId }, "Started outbox relay");
+    this.task = Promise.all([
+      this.run(this.abortController.signal),
+      this.runCleanup(this.abortController.signal),
+      this.reportMetrics(this.abortController.signal),
+    ]).then(() => undefined);
+    this.logger?.info(
+      {
+        workerId: this.workerId,
+        publishedRetentionMs: this.publishedRetentionMs,
+        cleanupIntervalMs: this.cleanupIntervalMs,
+        cleanupBatchSize: this.cleanupBatchSize,
+        cleanupMaxBatches: this.cleanupMaxBatches,
+        metricsIntervalMs: this.metricsIntervalMs,
+      },
+      "Started outbox relay",
+    );
   }
 
   async stop(): Promise<void> {
@@ -73,6 +139,7 @@ export class OutboxRelay {
           this.batchSize,
           this.lockTimeoutMs,
         );
+        this.counters.claimed += events.length;
 
         if (events.length === 0) {
           await wait(this.pollIntervalMs, signal);
@@ -94,6 +161,85 @@ export class OutboxRelay {
     }
   }
 
+  private async runCleanup(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      const cutoff = new Date(Date.now() - this.publishedRetentionMs);
+      try {
+        let deleted = 0;
+        let batches = 0;
+
+        while (batches < this.cleanupMaxBatches) {
+          const batchDeleted = await this.store.deletePublishedBefore(
+            cutoff,
+            this.cleanupBatchSize,
+          );
+          deleted += batchDeleted;
+          batches += 1;
+
+          if (batchDeleted < this.cleanupBatchSize) {
+            break;
+          }
+        }
+
+        this.counters.cleanupRuns += 1;
+        this.counters.cleanupDeleted += deleted;
+        this.logger?.info(
+          {
+            workerId: this.workerId,
+            cutoff,
+            deleted,
+            batches,
+            batchLimitReached: batches === this.cleanupMaxBatches,
+          },
+          "Completed published outbox cleanup",
+        );
+      } catch (error) {
+        this.counters.cleanupFailures += 1;
+        this.logger?.error(
+          { workerId: this.workerId, cutoff, error: errorMessage(error) },
+          "Published outbox cleanup failed",
+        );
+      }
+
+      await wait(this.cleanupIntervalMs, signal);
+    }
+  }
+
+  private async reportMetrics(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        const snapshot = await this.store.getOperationalSnapshot();
+        this.logger?.info(
+          {
+            metric: "outbox",
+            workerId: this.workerId,
+            counters: { ...this.counters },
+            gauges: {
+              pending: snapshot.pending,
+              retrying: snapshot.retrying,
+              publishedRetained: snapshot.publishedRetained,
+              oldestPendingAgeMs: snapshot.oldestPendingAt
+                ? Math.max(0, Date.now() - snapshot.oldestPendingAt.getTime())
+                : 0,
+            },
+          },
+          "Outbox operational metrics",
+        );
+      } catch (error) {
+        this.logger?.error(
+          {
+            metric: "outbox",
+            workerId: this.workerId,
+            error: errorMessage(error),
+          },
+          "Unable to collect outbox operational metrics",
+        );
+      }
+
+      await wait(this.metricsIntervalMs, signal);
+    }
+  }
+
   private async publish(event: ClaimedOutboxEvent): Promise<void> {
     try {
       await this.publisher.publish({
@@ -102,11 +248,13 @@ export class OutboxRelay {
         payload: event.payload,
       });
       await this.store.markPublished(event.id, this.workerId);
+      this.counters.published += 1;
       this.logger?.info(
         { eventId: event.id, subject: event.subject },
         "Published outbox event",
       );
     } catch (error) {
+      this.counters.publishFailures += 1;
       const retryDelayMs = retryDelay(event.attempts + 1);
       await this.store.markFailed(
         event.id,

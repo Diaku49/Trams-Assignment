@@ -3,14 +3,15 @@
 import {
   AckPolicy,
   DeliverPolicy,
+  headers,
   nanos,
   type Consumer,
   type ConsumerMessages,
   type JsMsg,
   type NatsConnection,
-} from 'nats';
-import type { MessagingLogger } from '../types';
-import { JetStreamPublisher } from './publisher';
+} from "nats";
+import type { MessagingLogger } from "../types";
+import { JetStreamPublisher } from "./publisher";
 
 const DEFAULT_MAX_DELIVER = 5;
 const DEFAULT_ACK_WAIT_MS = 30_000;
@@ -62,7 +63,7 @@ export class JetStreamConsumer {
 
     this.logger?.info(
       { stream: resolved.stream, durable: resolved.durableName },
-      'Started durable JetStream consumer',
+      "Started durable JetStream consumer",
     );
 
     return { messages, durableName: resolved.durableName };
@@ -116,7 +117,9 @@ async function ensureDurableConsumer<TEvent>(
     }
   }
 
-  return connection.jetstream().consumers.get(config.stream, config.durableName);
+  return connection
+    .jetstream()
+    .consumers.get(config.stream, config.durableName);
 }
 
 async function processMessages<TEvent>(
@@ -132,16 +135,13 @@ async function processMessages<TEvent>(
       try {
         event = config.decode(message.data);
       } catch (error) {
-        logger?.error(
-          {
-            stream: config.stream,
-            durable: config.durableName,
-            streamSequence: message.info.streamSequence,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          'Terminated malformed event',
+        await preserveMalformedMessage(
+          connection,
+          message,
+          config,
+          error,
+          logger,
         );
-        message.term();
         continue;
       }
 
@@ -159,7 +159,7 @@ async function processMessages<TEvent>(
         durable: config.durableName,
         error: error instanceof Error ? error.message : String(error),
       },
-      'Durable consumer stopped unexpectedly',
+      "Durable consumer stopped unexpectedly",
     );
   }
 }
@@ -176,26 +176,28 @@ async function handleFailure<TEvent>(
 
   if (message.info.deliveryCount >= config.maxDeliver) {
     try {
-      await new JetStreamPublisher(connection).publish({
-        subject: config.deadLetterSubject,
-        eventId: `dlq:${eventId}`,
-        payload: event,
-      });
+      await publishDeadLetter(connection, message, config, error, eventId);
       message.term();
       logger?.error(
         {
+          metric: "jetstream_dlq",
+          outcome: "preserved",
+          reason: "processing-failed",
           stream: config.stream,
           durable: config.durableName,
           eventId,
           deliveryCount: message.info.deliveryCount,
           error: error instanceof Error ? error.message : String(error),
         },
-        'Moved event to the dead-letter subject',
+        "Moved event to the dead-letter subject",
       );
       return;
     } catch (deadLetterError) {
       logger?.error(
         {
+          metric: "jetstream_dlq",
+          outcome: "preserve_failed",
+          reason: "processing-failed",
           stream: config.stream,
           durable: config.durableName,
           eventId,
@@ -204,14 +206,15 @@ async function handleFailure<TEvent>(
               ? deadLetterError.message
               : String(deadLetterError),
         },
-        'Unable to publish event to the dead-letter subject',
+        "Unable to publish event to the dead-letter subject",
       );
     }
   }
 
-  const retryDelay = config.retryDelaysMs[
-    Math.min(message.info.deliveryCount - 1, config.retryDelaysMs.length - 1)
-  ];
+  const retryDelay =
+    config.retryDelaysMs[
+      Math.min(message.info.deliveryCount - 1, config.retryDelaysMs.length - 1)
+    ];
   message.nak(retryDelay);
   logger?.warn(
     {
@@ -222,20 +225,104 @@ async function handleFailure<TEvent>(
       retryDelay,
       error: error instanceof Error ? error.message : String(error),
     },
-    'Failed to process event; scheduled redelivery',
+    "Failed to process event; scheduled redelivery",
   );
 }
 
+async function preserveMalformedMessage<TEvent>(
+  connection: NatsConnection,
+  message: JsMsg,
+  config: ResolvedConsumerConfig<TEvent>,
+  error: unknown,
+  logger?: MessagingLogger,
+): Promise<void> {
+  try {
+    await publishDeadLetter(connection, message, config, error);
+    message.term();
+    logger?.error(
+      {
+        metric: "jetstream_dlq",
+        outcome: "preserved",
+        reason: "malformed",
+        stream: config.stream,
+        durable: config.durableName,
+        originalSubject: message.subject,
+        streamSequence: message.info.streamSequence,
+        payloadBytes: message.data.byteLength,
+        error: errorMessage(error),
+      },
+      "Preserved malformed event in the dead-letter subject",
+    );
+  } catch (deadLetterError) {
+    const retryDelay =
+      config.retryDelaysMs[
+        Math.min(
+          message.info.deliveryCount - 1,
+          config.retryDelaysMs.length - 1,
+        )
+      ];
+    message.nak(retryDelay);
+    logger?.error(
+      {
+        metric: "jetstream_dlq",
+        outcome: "preserve_failed",
+        reason: "malformed",
+        stream: config.stream,
+        durable: config.durableName,
+        originalSubject: message.subject,
+        streamSequence: message.info.streamSequence,
+        deliveryCount: message.info.deliveryCount,
+        retryDelay,
+        decodeError: errorMessage(error),
+        deadLetterError: errorMessage(deadLetterError),
+      },
+      "Could not preserve malformed event; original was not terminated",
+    );
+  }
+}
+
+async function publishDeadLetter<TEvent>(
+  connection: NatsConnection,
+  message: JsMsg,
+  config: ResolvedConsumerConfig<TEvent>,
+  error: unknown,
+  eventId?: string,
+): Promise<void> {
+  const metadata = headers();
+  metadata.set("Trams-Dlq-Reason", eventId ? "processing-failed" : "malformed");
+  metadata.set("Trams-Original-Subject", message.subject);
+  metadata.set("Trams-Source-Stream", config.stream);
+  metadata.set("Trams-Source-Sequence", String(message.info.streamSequence));
+  metadata.set("Trams-Consumer", config.durableName);
+  metadata.set("Trams-Delivery-Count", String(message.info.deliveryCount));
+  metadata.set("Trams-Error", errorMessage(error).slice(0, 1_000));
+  if (eventId) {
+    metadata.set("Trams-Event-Id", eventId);
+  }
+
+  await new JetStreamPublisher(connection).publishRaw({
+    subject: config.deadLetterSubject,
+    messageId: `dlq:${config.stream}:${message.info.streamSequence}`,
+    data: message.data,
+    headers: metadata,
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 interface ResolvedConsumerConfig<TEvent>
-  extends Required<
-    Pick<
-      DurableConsumerConfig<TEvent>,
-      'maxDeliver' | 'ackWaitMs' | 'maxAckPending' | 'retryDelaysMs'
-    >
-  >,
+  extends
+    Required<
+      Pick<
+        DurableConsumerConfig<TEvent>,
+        "maxDeliver" | "ackWaitMs" | "maxAckPending" | "retryDelaysMs"
+      >
+    >,
     Omit<
       DurableConsumerConfig<TEvent>,
-      'maxDeliver' | 'ackWaitMs' | 'maxAckPending' | 'retryDelaysMs'
+      "maxDeliver" | "ackWaitMs" | "maxAckPending" | "retryDelaysMs"
     > {}
 
 function resolveConfig<TEvent>(
@@ -245,31 +332,45 @@ function resolveConfig<TEvent>(
   const retryDelaysMs =
     config.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS.slice(0, maxDeliver);
 
-  if (!config.stream || !config.durableName || !config.filterSubject || !config.deadLetterSubject) {
-    throw new Error('Stream, durable name, filter subject, and dead-letter subject are required');
+  if (
+    !config.stream ||
+    !config.durableName ||
+    !config.filterSubject ||
+    !config.deadLetterSubject
+  ) {
+    throw new Error(
+      "Stream, durable name, filter subject, and dead-letter subject are required",
+    );
   }
 
   if (!Number.isSafeInteger(maxDeliver) || maxDeliver < 1) {
-    throw new Error('maxDeliver must be a positive integer');
+    throw new Error("maxDeliver must be a positive integer");
   }
 
   if (retryDelaysMs.length === 0 || retryDelaysMs.length > maxDeliver) {
-    throw new Error('retryDelaysMs must contain between 1 and maxDeliver delays');
+    throw new Error(
+      "retryDelaysMs must contain between 1 and maxDeliver delays",
+    );
   }
 
   for (const delay of retryDelaysMs) {
     if (!Number.isSafeInteger(delay) || delay <= 0) {
-      throw new Error('Each retry delay must be a positive integer in milliseconds');
+      throw new Error(
+        "Each retry delay must be a positive integer in milliseconds",
+      );
     }
   }
 
   return {
     ...config,
     maxDeliver,
-    ackWaitMs: positiveInteger(config.ackWaitMs ?? DEFAULT_ACK_WAIT_MS, 'ackWaitMs'),
+    ackWaitMs: positiveInteger(
+      config.ackWaitMs ?? DEFAULT_ACK_WAIT_MS,
+      "ackWaitMs",
+    ),
     maxAckPending: positiveInteger(
       config.maxAckPending ?? DEFAULT_MAX_ACK_PENDING,
-      'maxAckPending',
+      "maxAckPending",
     ),
     retryDelaysMs,
   };
@@ -284,5 +385,5 @@ function positiveInteger(value: number, name: string): number {
 }
 
 function isConsumerNotFound(error: unknown): boolean {
-  return error instanceof Error && error.message === 'consumer not found';
+  return error instanceof Error && error.message === "consumer not found";
 }

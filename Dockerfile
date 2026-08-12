@@ -29,5 +29,6 @@ COPY --from=build /app/apps ./apps
 COPY --from=build /app/libs ./libs
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+COPY --from=build /app/scripts ./scripts
 
 USER node

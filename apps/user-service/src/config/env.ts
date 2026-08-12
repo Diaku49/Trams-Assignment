@@ -9,6 +9,13 @@ export interface UserServiceConfig {
   databaseUrl: string;
   passwordSaltRounds: number;
   rpcQueueGroup: string;
+  outbox: {
+    publishedRetentionMs: number;
+    cleanupIntervalMs: number;
+    cleanupBatchSize: number;
+    cleanupMaxBatches: number;
+    metricsIntervalMs: number;
+  };
   nats: {
     url: string;
     user: string;
@@ -29,6 +36,23 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   PASSWORD_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
   USER_SERVICE_QUEUE_GROUP: z.string().trim().min(1).default("user-service"),
+  OUTBOX_PUBLISHED_RETENTION_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 60 * 60 * 1_000),
+  OUTBOX_CLEANUP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60 * 60 * 1_000),
+  OUTBOX_CLEANUP_BATCH_SIZE: z.coerce.number().int().positive().default(500),
+  OUTBOX_CLEANUP_MAX_BATCHES: z.coerce.number().int().positive().default(20),
+  OUTBOX_METRICS_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60_000),
   NATS_URL: z.string().min(1),
   NATS_USER: z.string().min(1),
   NATS_PASSWORD: z.string().min(1),
@@ -52,6 +76,13 @@ function loadEnv(): UserServiceConfig {
     databaseUrl: env.DATABASE_URL,
     passwordSaltRounds: env.PASSWORD_SALT_ROUNDS,
     rpcQueueGroup: env.USER_SERVICE_QUEUE_GROUP,
+    outbox: {
+      publishedRetentionMs: env.OUTBOX_PUBLISHED_RETENTION_MS,
+      cleanupIntervalMs: env.OUTBOX_CLEANUP_INTERVAL_MS,
+      cleanupBatchSize: env.OUTBOX_CLEANUP_BATCH_SIZE,
+      cleanupMaxBatches: env.OUTBOX_CLEANUP_MAX_BATCHES,
+      metricsIntervalMs: env.OUTBOX_METRICS_INTERVAL_MS,
+    },
     nats: {
       url: env.NATS_URL,
       user: env.NATS_USER,

@@ -10,6 +10,13 @@ export interface ClaimedOutboxEvent {
   attempts: number;
 }
 
+export interface OutboxOperationalSnapshot {
+  pending: number;
+  retrying: number;
+  publishedRetained: number;
+  oldestPendingAt: Date | null;
+}
+
 export interface OutboxStore {
   claimBatch(
     workerId: string,
@@ -23,6 +30,8 @@ export interface OutboxStore {
     retryAt: Date,
     error: string,
   ): Promise<void>;
+  deletePublishedBefore(cutoff: Date, batchSize: number): Promise<number>;
+  getOperationalSnapshot(): Promise<OutboxOperationalSnapshot>;
 }
 
 const outboxSelect = {
@@ -108,6 +117,55 @@ export class OutboxRepository implements OutboxStore {
     });
 
     assertLeaseWasOwned(result.count, eventId);
+  }
+
+  async deletePublishedBefore(
+    cutoff: Date,
+    batchSize: number,
+  ): Promise<number> {
+    const expired = await this.database.outboxEvent.findMany({
+      where: { publishedAt: { lt: cutoff } },
+      orderBy: { publishedAt: "asc" },
+      take: batchSize,
+      select: { id: true },
+    });
+
+    if (expired.length === 0) {
+      return 0;
+    }
+
+    const result = await this.database.outboxEvent.deleteMany({
+      where: {
+        id: { in: expired.map(({ id }) => id) },
+        publishedAt: { lt: cutoff },
+      },
+    });
+    return result.count;
+  }
+
+  async getOperationalSnapshot(): Promise<OutboxOperationalSnapshot> {
+    const [pending, retrying, publishedRetained, oldestPending] =
+      await Promise.all([
+        this.database.outboxEvent.count({ where: { publishedAt: null } }),
+        this.database.outboxEvent.count({
+          where: { publishedAt: null, attempts: { gt: 0 } },
+        }),
+        this.database.outboxEvent.count({
+          where: { publishedAt: { not: null } },
+        }),
+        this.database.outboxEvent.findFirst({
+          where: { publishedAt: null },
+          orderBy: { createdAt: "asc" },
+          select: { createdAt: true },
+        }),
+      ]);
+
+    return {
+      pending,
+      retrying,
+      publishedRetained,
+      oldestPendingAt: oldestPending?.createdAt ?? null,
+    };
   }
 }
 
