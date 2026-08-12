@@ -18,6 +18,18 @@ services:
       retries: 20
       start_period: 5s
 
+  postgres-init:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: trams
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./infra/postgres/ensure-notification-database.sh:/scripts/ensure-notification-database.sh:ro
+    command: ["/bin/sh", "/scripts/ensure-notification-database.sh"]
+    restart: "no"
+
   nats-certs:
     image: alpine:3.20
     volumes:
@@ -67,10 +79,11 @@ services:
       target: build
     environment:
       DATABASE_URL: postgresql://trams:trams@postgres:5432/trams?schema=public
+      NOTIFICATION_DATABASE_URL: postgresql://trams:trams@postgres:5432/trams_notifications?schema=public
     depends_on:
-      postgres:
-        condition: service_healthy
-    command: ["npx", "prisma", "migrate", "deploy"]
+      postgres-init:
+        condition: service_completed_successfully
+    command: ["npm", "run", "prisma:migrate:deploy"]
     restart: "no"
 
   user-service:
@@ -102,6 +115,7 @@ services:
     environment:
       NODE_ENV: development
       LOG_LEVEL: info
+      NOTIFICATION_DATABASE_URL: postgresql://trams:trams@postgres:5432/trams_notifications?schema=public
       NATS_URL: tls://nats:4222
       NATS_USER: notification-service
       NATS_PASSWORD: notification-service-local-password
@@ -110,6 +124,7 @@ services:
       NOTIFICATION_MAX_DELIVER: 5
       NOTIFICATION_ACK_WAIT_MS: 30000
       NOTIFICATION_MAX_ACK_PENDING: 10
+      NOTIFICATION_DELIVERY_LEASE_MS: 60000
     depends_on:
       nats:
         condition: service_healthy

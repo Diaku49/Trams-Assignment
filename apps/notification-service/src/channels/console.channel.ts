@@ -3,16 +3,21 @@
 import type { MessagingLogger } from "@app/messaging";
 import type {
   NotificationChannel,
+  NotificationDeliveryOptions,
   WelcomeNotification,
 } from "./channel.interface";
 
 export class ConsoleNotificationChannel implements NotificationChannel {
   constructor(private readonly logger: MessagingLogger) {}
 
-  async sendWelcome(notification: WelcomeNotification): Promise<void> {
+  async sendWelcome(
+    notification: WelcomeNotification,
+    options: NotificationDeliveryOptions,
+  ): Promise<void> {
     this.logger.info(
       {
         eventId: notification.eventId,
+        idempotencyKey: options.idempotencyKey,
         userId: notification.userId,
         recipient: notification.email,
       },

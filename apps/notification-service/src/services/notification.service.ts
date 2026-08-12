@@ -1,68 +1,82 @@
-// Converts user events into notifications and avoids duplicate sends in-process.
+// Turns user.created events into durable, idempotent notification deliveries.
 
 import type { UserCreatedEvent } from "@app/contracts";
 import type { MessagingLogger } from "@app/messaging";
 import type { NotificationChannel } from "../channels/channel.interface";
+import { NotificationDeliveryInProgressError } from "../errors/notification-delivery.error";
+import type { NotificationDeliveryStore } from "../repositories/notification-delivery.repository";
 
-const DEFAULT_IDEMPOTENCY_CACHE_SIZE = 10_000;
+const WELCOME_CHANNEL = "welcome";
+
+export interface NotificationServiceOptions {
+  leaseDurationMs: number;
+}
 
 export class NotificationService {
-  private readonly processedEventIds = new Map<string, true>();
-  private readonly processing = new Map<string, Promise<void>>();
-
   constructor(
     private readonly channel: NotificationChannel,
+    private readonly deliveries: NotificationDeliveryStore,
     private readonly logger?: MessagingLogger,
-    private readonly idempotencyCacheSize = DEFAULT_IDEMPOTENCY_CACHE_SIZE,
-  ) {
-    if (
-      !Number.isSafeInteger(idempotencyCacheSize) ||
-      idempotencyCacheSize < 1
-    ) {
-      throw new Error("idempotencyCacheSize must be a positive integer");
-    }
-  }
+    private readonly options?: NotificationServiceOptions,
+  ) {}
 
-  handleUserCreated(event: UserCreatedEvent): Promise<void> {
-    if (this.processedEventIds.has(event.eventId)) {
-      this.logger?.info(
-        { eventId: event.eventId },
-        "Skipped duplicate user.created event",
-      );
-      return Promise.resolve();
-    }
-
-    const inProgress = this.processing.get(event.eventId);
-    if (inProgress) {
-      return inProgress;
-    }
-
-    const task = this.sendWelcome(event).finally(() => {
-      this.processing.delete(event.eventId);
-    });
-    this.processing.set(event.eventId, task);
-    return task;
-  }
-
-  private async sendWelcome(event: UserCreatedEvent): Promise<void> {
-    await this.channel.sendWelcome({
+  async handleUserCreated(event: UserCreatedEvent): Promise<void> {
+    const claim = await this.deliveries.claim({
       eventId: event.eventId,
       userId: event.payload.id,
-      email: event.payload.email,
-      name: event.payload.name,
+      recipient: event.payload.email,
+      channel: WELCOME_CHANNEL,
+      leaseDurationMs: this.leaseDurationMs,
     });
-    this.rememberProcessed(event.eventId);
-  }
 
-  private rememberProcessed(eventId: string): void {
-    this.processedEventIds.set(eventId, true);
-
-    if (this.processedEventIds.size > this.idempotencyCacheSize) {
-      const oldestEventId = this.processedEventIds.keys().next().value as
-        string | undefined;
-      if (oldestEventId) {
-        this.processedEventIds.delete(oldestEventId);
-      }
+    if (claim.state === "already-sent") {
+      this.logger?.info(
+        { eventId: event.eventId },
+        "Skipped already-sent user.created notification",
+      );
+      return;
     }
+
+    if (claim.state === "in-progress") {
+      throw new NotificationDeliveryInProgressError(event.eventId);
+    }
+
+    try {
+      await this.channel.sendWelcome(
+        {
+          eventId: event.eventId,
+          userId: event.payload.id,
+          email: event.payload.email,
+          name: event.payload.name,
+        },
+        // A real email provider must use this key too: if a process dies after
+        // the provider accepts the email but before markSent(), its retry is
+        // deduplicated by the provider as well as this database.
+        { idempotencyKey: event.eventId },
+      );
+    } catch (error) {
+      await this.deliveries.markFailed(
+        event.eventId,
+        claim.claimToken,
+        errorMessage(error),
+      );
+      throw error;
+    }
+
+    await this.deliveries.markSent(event.eventId, claim.claimToken);
   }
+
+  private get leaseDurationMs(): number {
+    const value = this.options?.leaseDurationMs ?? 60_000;
+
+    if (!Number.isSafeInteger(value) || value < 1_000) {
+      throw new Error("deliveryLeaseMs must be an integer of at least 1000ms");
+    }
+
+    return value;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

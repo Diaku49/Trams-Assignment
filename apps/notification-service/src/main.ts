@@ -1,5 +1,6 @@
 // Notification Service composition root. No HTTP server is exposed.
 
+import { PrismaPg } from "@prisma/adapter-pg";
 import {
   connectNats,
   type MessagingClient,
@@ -9,6 +10,8 @@ import pino from "pino";
 import { ConsoleNotificationChannel } from "./channels/console.channel";
 import { config } from "./config/env";
 import { UserEventsConsumer } from "./consumers/user-events.consumer";
+import { PrismaClient } from "./generated/prisma/client";
+import { NotificationDeliveryRepository } from "./repositories/notification-delivery.repository";
 import { NotificationService } from "./services/notification.service";
 
 const logger = pino({
@@ -23,21 +26,32 @@ export interface RunningNotificationService {
 }
 
 export async function startNotificationService(): Promise<RunningNotificationService> {
-  const messaging = await connectNats({
-    servers: config.nats.url,
-    name: "notification-service",
-    user: config.nats.user,
-    password: config.nats.password,
-    tls: config.nats.tls,
-    logger,
+  const prisma = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: config.databaseUrl }),
   });
+  let messaging: MessagingClient | undefined;
 
   try {
+    await prisma.$connect();
+    logger.info("Connected to Notification Service PostgreSQL database");
+
+    const connectedMessaging = await connectNats({
+      servers: config.nats.url,
+      name: "notification-service",
+      user: config.nats.user,
+      password: config.nats.password,
+      tls: config.nats.tls,
+      logger,
+    });
+    messaging = connectedMessaging;
+
     const notifications = new NotificationService(
       new ConsoleNotificationChannel(logger),
+      new NotificationDeliveryRepository(prisma),
       logger,
+      { leaseDurationMs: config.deliveryLeaseMs },
     );
-    const consumer = await new UserEventsConsumer(messaging).startCreated(
+    const consumer = await new UserEventsConsumer(connectedMessaging).startCreated(
       config.consumer,
       (event) => notifications.handleUserCreated(event),
     );
@@ -52,12 +66,19 @@ export async function startNotificationService(): Promise<RunningNotificationSer
       messaging,
       consumer,
       shutdown(): Promise<void> {
-        shutdownPromise ??= shutdownNotificationService(consumer, messaging);
+        shutdownPromise ??= shutdownNotificationService(
+          consumer,
+          connectedMessaging,
+          prisma,
+        );
         return shutdownPromise;
       },
     };
   } catch (error) {
-    await messaging.drain();
+    await Promise.allSettled([
+      messaging?.drain() ?? Promise.resolve(),
+      prisma.$disconnect(),
+    ]);
     throw error;
   }
 }
@@ -78,6 +99,7 @@ async function main(): Promise<void> {
 async function shutdownNotificationService(
   consumer: StartedDurableConsumer,
   messaging: MessagingClient,
+  prisma: PrismaClient,
 ): Promise<void> {
   logger.info(
     { durableName: consumer.durableName },
@@ -87,7 +109,11 @@ async function shutdownNotificationService(
   try {
     await consumer.messages.close();
   } finally {
-    await messaging.drain();
+    try {
+      await messaging.drain();
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 }
 

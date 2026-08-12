@@ -7,6 +7,14 @@ export interface WelcomeNotification {
   name: string | null;
 }
 
+export interface NotificationDeliveryOptions {
+  /** Forward this value to a real provider's idempotency-key mechanism. */
+  idempotencyKey: string;
+}
+
 export interface NotificationChannel {
-  sendWelcome(notification: WelcomeNotification): Promise<void>;
+  sendWelcome(
+    notification: WelcomeNotification,
+    options: NotificationDeliveryOptions,
+  ): Promise<void>;
 }

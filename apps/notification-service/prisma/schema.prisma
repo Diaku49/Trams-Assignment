@@ -1,0 +1,29 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Notification Service owns this table in its own database. An event ID may be
+// sent at least once by JetStream, but only one delivery lifecycle is recorded.
+model NotificationDelivery {
+  eventId    String    @id @db.Uuid
+  channel    String
+  userId     String    @db.Uuid
+  recipient  String
+  attempts   Int       @default(0)
+  claimedAt  DateTime?
+  claimToken String?
+  sentAt     DateTime?
+  lastError  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([sentAt])
+  @@index([claimedAt])
+  @@map("notification_deliveries")
+}

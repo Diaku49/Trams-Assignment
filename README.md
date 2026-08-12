@@ -4,7 +4,8 @@
 
 The Compose environment starts PostgreSQL, a TLS-enabled NATS/JetStream broker,
 runs Prisma migrations, and starts the API Gateway, User Service, and
-Notification Service.
+Notification Service. The User and Notification Services use separate local
+databases (`trams` and `trams_notifications`) to preserve data ownership.
 
 ```bash
 docker compose up --build
