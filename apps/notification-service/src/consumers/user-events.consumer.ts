@@ -5,19 +5,19 @@ import {
   subjects,
   userCreatedEventSchema,
   type UserCreatedEvent,
-} from '@app/contracts';
+} from "@app/contracts";
 import {
   type DurableConsumerConfig,
   type MessagingClient,
   type StartedDurableConsumer,
-} from '@app/messaging';
-import { JSONCodec } from 'nats';
+} from "@app/messaging";
+import { JSONCodec } from "nats";
 
 const codec = JSONCodec<unknown>();
 
 export type UserCreatedConsumerConfig = Pick<
   DurableConsumerConfig<UserCreatedEvent>,
-  'durableName' | 'maxDeliver' | 'ackWaitMs' | 'maxAckPending' | 'retryDelaysMs'
+  "durableName" | "maxDeliver" | "ackWaitMs" | "maxAckPending" | "retryDelaysMs"
 >;
 
 export type UserCreatedHandler = (event: UserCreatedEvent) => Promise<void>;
