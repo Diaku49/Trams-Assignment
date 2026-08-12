@@ -23,7 +23,9 @@ export function createAuthController(
   return {
     signUp: async (req, res, next) => {
       try {
-        const user = await users.signUp(req.body as CreateUserDto);
+        const user = await users.signUp(req.body as CreateUserDto, {
+          requestId: String(req.id),
+        });
         res.status(201).json(user);
       } catch (error) {
         next(toAppError(error));
@@ -31,7 +33,9 @@ export function createAuthController(
     },
     login: async (req, res, next) => {
       try {
-        const user = await users.login(req.body as LoginDto);
+        const user = await users.login(req.body as LoginDto, {
+          requestId: String(req.id),
+        });
         const response = loginResponseDtoSchema.parse({
           accessToken: tokens.sign(user),
           tokenType: "Bearer",

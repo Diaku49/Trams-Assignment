@@ -23,7 +23,9 @@ export async function startGateway(): Promise<RunningGateway> {
     auth: createAuthController(users, tokens, config.jwt.expiresIn),
     users: createUserController(users),
     tokens,
+    readiness: users,
     corsOrigins: config.corsOrigins,
+    logger,
   });
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port }, "API Gateway is listening");

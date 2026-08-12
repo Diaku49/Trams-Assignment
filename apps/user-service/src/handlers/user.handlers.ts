@@ -8,6 +8,7 @@ import {
   createUserDtoSchema,
   getUserRequestSchema,
   loginDtoSchema,
+  natsHeaders,
   subjects,
   updateUserRequestSchema,
   userResponseDtoSchema,
@@ -46,6 +47,17 @@ export function registerUserRpcRoutes(
   logger?: MessagingLogger,
 ): Subscription[] {
   return [
+    connection.subscribe(subjects.userRpcHealth, {
+      queue: queueGroup,
+      callback: (error, message) => {
+        if (error) {
+          logSubscriptionError(logger, subjects.userRpcHealth, error);
+          return;
+        }
+        respond(message, createRpcSuccess({ status: "ok" }));
+        logRouteSuccess(logger, subjects.userRpcHealth, message);
+      },
+    }),
     connection.subscribe(subjects.userRpcCreate, {
       queue: queueGroup,
       callback: (error, message) => {
@@ -109,6 +121,7 @@ async function handleSignUp(
   try {
     const user = userResponseDtoSchema.parse(await users.signUp(input.data));
     respond(message, createRpcSuccess(user));
+    logRouteSuccess(logger, subjects.userRpcCreate, message);
   } catch (error) {
     respondWithError(message, subjects.userRpcCreate, error, logger);
   }
@@ -134,6 +147,7 @@ async function handleLogin(
   try {
     const user = authenticatedUserSchema.parse(await users.login(input.data));
     respond(message, createRpcSuccess(user));
+    logRouteSuccess(logger, subjects.userRpcAuthenticate, message);
   } catch (error) {
     respondWithError(message, subjects.userRpcAuthenticate, error, logger);
   }
@@ -161,6 +175,7 @@ async function handleGetUser(
       await users.getUser(input.data.id),
     );
     respond(message, createRpcSuccess(user));
+    logRouteSuccess(logger, subjects.userRpcGetById, message);
   } catch (error) {
     respondWithError(message, subjects.userRpcGetById, error, logger);
   }
@@ -189,6 +204,7 @@ async function handleUpdateUser(
       await users.updateUser(id, update),
     );
     respond(message, createRpcSuccess(user));
+    logRouteSuccess(logger, subjects.userRpcUpdate, message);
   } catch (error) {
     respondWithError(message, subjects.userRpcUpdate, error, logger);
   }
@@ -217,7 +233,7 @@ function respondInvalidRequest(
     message: "RPC request does not match its contract",
     details,
   });
-  logRouteError(logger, subject, failure);
+  logRouteError(logger, subject, failure, message);
   respond(message, failure);
 }
 
@@ -228,7 +244,7 @@ function respondWithError(
   logger?: MessagingLogger,
 ): void {
   const failure = toRpcFailure(error);
-  logRouteError(logger, subject, failure, error);
+  logRouteError(logger, subject, failure, message, error);
   respond(message, failure);
 }
 
@@ -258,14 +274,31 @@ function logRouteError(
   logger: MessagingLogger | undefined,
   subject: string,
   failure: RpcFailure,
+  message: Msg,
   error?: unknown,
 ): void {
   logger?.warn(
     {
       subject,
+      requestId: requestIdFrom(message),
       code: failure.error.code,
       error: error instanceof Error ? error.message : undefined,
     },
     failure.error.message,
   );
+}
+
+function logRouteSuccess(
+  logger: MessagingLogger | undefined,
+  subject: string,
+  message: Msg,
+): void {
+  logger?.info(
+    { subject, requestId: requestIdFrom(message) },
+    "Handled User Service RPC request",
+  );
+}
+
+function requestIdFrom(message: Msg): string | undefined {
+  return message.headers?.get(natsHeaders.requestId) || undefined;
 }

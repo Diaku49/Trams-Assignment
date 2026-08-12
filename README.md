@@ -1,116 +1,193 @@
 # Trams Microservices
 
-## Run locally with Docker
+A small TypeScript microservices system for user management. The API Gateway is
+the only public HTTP service. It communicates with the User Service through
+NATS request/reply; the User Service publishes `user.created` through a
+transactional outbox; and the Notification Service consumes that event from
+NATS JetStream.
 
-The Compose environment starts PostgreSQL, a TLS-enabled NATS/JetStream broker,
-runs Prisma migrations, and starts the API Gateway, User Service, and
-Notification Service. The User and Notification Services use separate local
-databases (`trams` and `trams_notifications`) to preserve data ownership.
+See [the architecture guide](docs/architecture.md) for the component and
+failure flows, and [the OpenAPI specification](docs/openapi.yaml) for the HTTP
+API contract.
+
+## Prerequisites
+
+- Node.js 22 or later and npm
+- Docker Desktop with Docker Compose v2, for the recommended local setup
+- OpenSSL and a local PostgreSQL 16+ instance only when running services
+  outside Docker
+
+## Quick start with Docker
+
+Docker Compose is the easiest way to run the complete environment. It starts
+PostgreSQL, creates the Notification Service database, generates development
+TLS certificates, starts NATS with JetStream, applies both Prisma migration
+histories, and starts all three services.
 
 ```bash
 docker compose up --build
 ```
 
-The API Gateway is available at `http://localhost:3000`; its health endpoint is
-`GET /api/health`. NATS monitoring is available at `http://localhost:8222`.
-
-For example, create a user with:
+The Gateway is available at `http://localhost:3000`; NATS monitoring is at
+`http://localhost:8222`.
 
 ```bash
+# Gateway process only
+curl http://localhost:3000/api/health/live
+
+# Gateway + NATS + at least one User Service RPC worker
+curl http://localhost:3000/api/health/ready
+
 curl -X POST http://localhost:3000/api/auth/signup \
   -H 'content-type: application/json' \
   -d '{"email":"ada@example.com","password":"secure-password-123","name":"Ada"}'
 ```
 
-The `nats-certs` setup container generates a development-only CA and server
-certificate into Docker volumes. NATS receives the server key; application
-containers receive only the CA certificate. This makes their `tls://nats:4222`
-connections verify the broker certificate.
-
-Run another User Service replica to verify queue-group RPC load balancing:
+Run more User Service replicas to exercise queue-group RPC load balancing:
 
 ```bash
 docker compose up --scale user-service=2
 ```
 
-Stop the environment while preserving PostgreSQL and JetStream data:
+Stop services but preserve PostgreSQL and JetStream data:
 
 ```bash
 docker compose down
 ```
 
-Remove all local data and regenerate the development certificates on next start:
+Remove all Compose volumes, including local database and JetStream data:
 
 ```bash
 docker compose down -v
 ```
 
-The credentials and JWT secret in `docker-compose.yml` are intentionally local
-development values. Supply secrets through your deployment platform in any
-non-local environment.
+The Compose passwords and JWT secret are development values only. Never reuse
+them in a deployed environment.
 
-## Outbox retention and operations
+## Environment setup for native development
 
-Published `outbox_events` rows are retained for seven days by default and then
-deleted in batches. The User Service emits a structured `Outbox operational
-metrics` log every minute with cumulative claimed/published/failure/cleanup
-counters and gauges for pending, retrying, retained-published rows, and the age
-of the oldest pending row. Cleanup also logs its cutoff and deleted row count.
-
-These settings are configurable in milliseconds/rows:
-
-- `OUTBOX_PUBLISHED_RETENTION_MS` (default `604800000`, seven days)
-- `OUTBOX_CLEANUP_INTERVAL_MS` (default `3600000`, one hour)
-- `OUTBOX_CLEANUP_BATCH_SIZE` (default `500`)
-- `OUTBOX_CLEANUP_MAX_BATCHES` (default `20` per cleanup run)
-- `OUTBOX_METRICS_INTERVAL_MS` (default `60000`, one minute)
-
-Inspect the metrics in Docker with:
+Install workspace dependencies and copy the example environment file:
 
 ```bash
-docker compose logs -f user-service | grep 'Outbox operational metrics'
+npm install
+cp .env.example .env
 ```
 
-## Inspect and replay `user.events.dlq`
+Set every blank value in `.env`. The required values are:
 
-Failed handlers and malformed messages are preserved on `user.events.dlq`.
-Malformed records contain their exact original bytes; DLQ headers record the
-original subject, source stream sequence, consumer, delivery count, reason, and
-error. The original JetStream message is terminated only after this DLQ publish
-is acknowledged. The `USER_EVENTS` stream retains these records under its
-configured seven-day/512 MiB limits.
+| Area                  | Required variables                                                                                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| User database         | `DATABASE_URL`                                                                                                                                                                                                          |
+| Notification database | `NOTIFICATION_DATABASE_URL`                                                                                                                                                                                             |
+| NATS clients          | `NATS_URL`, `NATS_USER`, `NATS_PASSWORD`, `NATS_TLS_CA_FILE`                                                                                                                                                            |
+| Gateway               | `JWT_SECRET` (at least 32 characters)                                                                                                                                                                                   |
+| NATS broker           | `GATEWAY_NATS_USER`, `GATEWAY_NATS_PASSWORD`, `USER_SERVICE_NATS_USER`, `USER_SERVICE_NATS_PASSWORD`, `NOTIFICATION_SERVICE_NATS_USER`, `NOTIFICATION_SERVICE_NATS_PASSWORD`, `NATS_TLS_CERT_FILE`, `NATS_TLS_KEY_FILE` |
 
-List DLQ records and find the `streamSequence` to investigate:
+`NATS_USER` and `NATS_PASSWORD` identify the particular process being started:
+use the Gateway credentials for the Gateway, User Service credentials for the
+User Service, and Notification Service credentials for the Notification
+Service. Each account has narrow permissions in
+[`infra/nats/nats-server.conf`](infra/nats/nats-server.conf).
+
+For a native TLS-enabled NATS server, generate local-only certificates once:
+
+```bash
+./infra/nats/generate-local-certs.sh
+```
+
+Point `NATS_TLS_CA_FILE`, `NATS_TLS_CERT_FILE`, and `NATS_TLS_KEY_FILE` at the
+generated files. Start PostgreSQL and NATS separately, apply migrations, then
+run the services:
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate:deploy
+npm run dev
+```
+
+`npm run dev` runs Gateway, User Service, and Notification Service together.
+Use `npm run dev:gateway`, `npm run dev:user`, or `npm run dev:notification`
+to run one process. The User and Notification services have no HTTP port; they
+need their database and NATS connection before they can start.
+
+## Prisma migrations
+
+There are two independent Prisma schemas and migration histories because the
+User and Notification services own different databases:
+
+- `prisma/` owns `users` and `outbox_events` in `DATABASE_URL`.
+- `apps/notification-service/prisma/` owns `notification_deliveries` in
+  `NOTIFICATION_DATABASE_URL`.
+
+Generate both clients and apply both existing migration histories with:
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate:deploy
+```
+
+Compose runs these commands in its one-off `migrate` service before starting
+the application services. For schema changes, create and review a migration in
+the schema's owning service, commit it, then use `prisma:migrate:deploy` in
+other environments. Do not let one service access the other service's tables.
+
+## Commands and testing
+
+```bash
+npm run build                  # TypeScript build for every workspace
+npm test                       # Run workspace test scripts
+npm run lint                   # ESLint over app and library TypeScript
+npm run format                 # Format TypeScript with Prettier
+npm run clean                  # Remove generated build output
+npm run dlq:inspect            # Inspect user.events.dlq (NATS env required)
+npm run dlq:replay -- 42       # Dry-run replay of DLQ stream sequence 42
+npm run dlq:replay -- 42 --execute
+```
+
+Run `npm run build` before submitting or deploying. `npm test` delegates to
+workspace test scripts; add focused unit, integration, and API tests as the
+application grows. The current repository does not yet include application
+test suites, so a successful command can mean that no test files ran.
+
+## Operations and failure handling
+
+`GET /api/health/live` confirms only that the Gateway process can answer HTTP.
+`GET /api/health/ready` (and the backwards-compatible `/api/health`) makes a
+short NATS RPC health call, so it returns `503` if NATS or User Service is not
+available.
+
+Every Gateway response has `x-request-id`. A valid incoming value is kept;
+otherwise the Gateway generates a UUID. Request logs use `pino-http`, redact
+credentials/cookies, and forward the request ID to User Service in a NATS
+header for correlated logs.
+
+The User Service writes the user and its `user.created` outbox row in one
+PostgreSQL transaction. A background relay publishes committed rows to
+JetStream, retries failures with exponential backoff, and cleans published rows
+after seven days by default. Its structured logs report outbox gauges and
+counters.
+
+The Notification Service uses a durable JetStream consumer with explicit ACKs.
+Failed deliveries are retried up to five times; then the original event bytes
+and diagnostic headers are safely copied to `user.events.dlq`. Notification
+delivery state is persisted in the Notification Service database with a unique
+`eventId`, which makes normal JetStream redelivery idempotent. A real email
+provider should receive that same `eventId` as its idempotency key.
+
+### Inspecting and replaying the DLQ
+
+When using Docker:
 
 ```bash
 docker compose exec user-service npm run dlq:inspect
-```
-
-Preview a replay without publishing anything:
-
-```bash
 docker compose exec user-service npm run dlq:replay -- 42
-```
-
-After inspecting and fixing the underlying cause, explicitly replay a valid
-processing-failure record to its original subject:
-
-```bash
 docker compose exec user-service npm run dlq:replay -- 42 --execute
 ```
 
-Malformed records require corrected JSON; replaying their preserved invalid
-bytes is rejected by the tool. The corrected file is validated against the
-shared `user.created` contract before publishing. Copy the correction into the
-container, preview it, and then execute:
+Replay is dry-run by default and never deletes the original DLQ record. A
+malformed event requires corrected JSON via `--payload-file`; the utility
+validates that payload against the shared `user.created` contract before an
+explicit replay.
 
-```bash
-docker compose cp corrected-user-created.json user-service:/tmp/corrected.json
-docker compose exec user-service npm run dlq:replay -- 42 --payload-file /tmp/corrected.json
-docker compose exec user-service npm run dlq:replay -- 42 --payload-file /tmp/corrected.json --execute
-```
-
-Replay is intentionally non-destructive: the DLQ record remains available for
-audit until stream retention removes it. Each replay gets a unique NATS message
-ID, while the Notification Service's persistent `eventId` idempotency still
-prevents a duplicate notification for an already completed event.
+For detailed retry and replay behavior, see
+[docs/architecture.md](docs/architecture.md#failure-and-retry-behavior).

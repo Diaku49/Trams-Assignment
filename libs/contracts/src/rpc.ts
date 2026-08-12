@@ -2,6 +2,14 @@
 
 import { z } from "zod";
 
+export const userServiceHealthResponseSchema = z
+  .object({ status: z.literal("ok") })
+  .strict();
+
+export type UserServiceHealthResponse = z.infer<
+  typeof userServiceHealthResponseSchema
+>;
+
 export const rpcRemoteErrorCodeSchema = z.enum([
   "INVALID_REQUEST",
   "EMAIL_ALREADY_IN_USE",

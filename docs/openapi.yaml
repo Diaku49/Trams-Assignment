@@ -1,0 +1,451 @@
+openapi: 3.0.3
+info:
+  title: Trams User API
+  version: 0.1.0
+  description: |
+    Public HTTP API exposed by the API Gateway. User persistence and password
+    verification happen in User Service over private NATS RPC; JWT issuance and
+    verification happen in the Gateway.
+servers:
+  - url: http://localhost:3000
+    description: Local Docker or native development
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Users
+paths:
+  /api/health/live:
+    get:
+      tags: [Health]
+      summary: Gateway liveness
+      description: Returns success when the API Gateway HTTP process can respond. It does not test dependencies.
+      responses:
+        "200":
+          description: Gateway is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessResponse"
+  /api/health/ready:
+    get:
+      tags: [Health]
+      summary: Gateway readiness
+      description: Performs a short private NATS RPC health check against User Service.
+      responses:
+        "200":
+          description: NATS and a User Service responder are available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Backwards-compatible readiness endpoint
+      description: Alias for `/api/health/ready`.
+      responses:
+        "200":
+          description: NATS and a User Service responder are available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+  /api/auth/signup:
+    post:
+      tags: [Authentication]
+      summary: Create a user
+      operationId: signUp
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+            example:
+              email: ada@example.com
+              password: secure-password-123
+              name: Ada Lovelace
+      responses:
+        "201":
+          description: User created
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Email is already in use
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/UserServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/UserServiceTimeout"
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Authenticate and obtain a bearer token
+      operationId: login
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              email: ada@example.com
+              password: secure-password-123
+      responses:
+        "200":
+          description: Credentials accepted
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/UserServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/UserServiceTimeout"
+  /api/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get the authenticated user
+      operationId: getUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: User found
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "502":
+          $ref: "#/components/responses/UserServiceInvalidResponse"
+        "503":
+          $ref: "#/components/responses/UserServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/UserServiceTimeout"
+    put:
+      tags: [Users]
+      summary: Update the authenticated user
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+            example:
+              name: Ada Byron
+      responses:
+        "200":
+          description: User updated
+          headers:
+            x-request-id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "409":
+          description: New email is already in use
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          $ref: "#/components/responses/UserServiceInvalidResponse"
+        "503":
+          $ref: "#/components/responses/UserServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/UserServiceTimeout"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: UUID of the authenticated user. A token may only access its own ID.
+      schema:
+        type: string
+        format: uuid
+    RequestId:
+      name: x-request-id
+      in: header
+      required: false
+      description: Optional correlation ID. Valid values contain 1-128 letters, numbers, `.`, `_`, `:`, or `-`; invalid or absent values are replaced by the Gateway.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]{1,128}$"
+  headers:
+    RequestId:
+      description: Correlation ID generated or accepted by the API Gateway.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Validation failed. `data` contains Zod validation details when applicable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Bearer token is missing, invalid, or expired.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: The authenticated user cannot access a different user's ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UserNotFound:
+      description: No user exists for the requested ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Too many authentication attempts. The authentication endpoints allow 20 requests per 15-minute window per rate-limit key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UserServiceUnavailable:
+      description: NATS or User Service is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UserServiceTimeout:
+      description: User Service did not answer before the Gateway RPC timeout.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UserServiceInvalidResponse:
+      description: User Service returned an invalid RPC response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    DependencyUnavailable:
+      description: NATS or User Service is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ReadinessUnavailableResponse"
+  schemas:
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Trimmed and lowercased by the API.
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, name, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AuthenticatedUser:
+      type: object
+      additionalProperties: false
+      required: [id, email, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+          nullable: true
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+          description: Signed HS256 JWT.
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: string
+          example: 15m
+        user:
+          $ref: "#/components/schemas/AuthenticatedUser"
+    Error:
+      type: object
+      required: [msg, data]
+      properties:
+        msg:
+          type: string
+        data:
+          nullable: true
+          description: Optional client-safe details, such as validation errors.
+    LivenessResponse:
+      type: object
+      required: [status, check]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        check:
+          type: string
+          enum: [liveness]
+    ReadinessResponse:
+      type: object
+      required: [status, check]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        check:
+          type: string
+          enum: [readiness]
+    ReadinessUnavailableResponse:
+      type: object
+      required: [status, check, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [unavailable]
+        check:
+          type: string
+          enum: [readiness]
+        dependencies:
+          type: object
+          required: [natsAndUserService]
+          properties:
+            natsAndUserService:
+              type: string
+              enum: [unavailable]

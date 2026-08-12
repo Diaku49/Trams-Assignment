@@ -5,9 +5,11 @@ import {
   createUserDtoSchema,
   getUserRequestSchema,
   loginDtoSchema,
+  natsHeaders,
   rpcResponseSchema,
   subjects,
   updateUserRequestSchema,
+  userServiceHealthResponseSchema,
   userResponseDtoSchema,
   type AuthenticatedUser,
   type CreateUserDto,
@@ -17,13 +19,20 @@ import {
   type RpcSuccess,
   type UpdateUserRequest,
   type UserResponseDto,
+  type UserServiceHealthResponse,
 } from "@app/contracts";
 import {
   connectNats,
   type MessagingClient,
   type MessagingLogger,
 } from "@app/messaging";
-import { ErrorCode, JSONCodec, NatsError, type NatsConnection } from "nats";
+import {
+  ErrorCode,
+  JSONCodec,
+  NatsError,
+  headers,
+  type NatsConnection,
+} from "nats";
 import type { ZodTypeAny } from "zod";
 
 const codec = JSONCodec<unknown>();
@@ -59,6 +68,7 @@ export class UserRpcError extends Error {
 
 export interface RpcOptions {
   timeoutMs?: number;
+  requestId?: string;
 }
 
 /** What Gateway controllers need from User Service. */
@@ -73,6 +83,7 @@ export interface UserServiceRpcClient {
     input: UpdateUserRequest,
     options?: RpcOptions,
   ): Promise<UserResponseDto>;
+  health(options?: RpcOptions): Promise<UserServiceHealthResponse>;
 }
 
 /** Opens API Gateway's one long-lived NATS connection. */
@@ -141,18 +152,22 @@ export class UserRpcClient implements UserServiceRpcClient {
     );
   }
 
+  async health(options: RpcOptions = {}): Promise<UserServiceHealthResponse> {
+    return this.call(
+      subjects.userRpcHealth,
+      {},
+      userServiceHealthResponseSchema,
+      options,
+    );
+  }
+
   private async call<TSchema extends ZodTypeAny>(
     subject: string,
     payload: unknown,
     responseSchema: TSchema,
     options: RpcOptions,
   ): Promise<TSchema["_output"]> {
-    const reply = await request(
-      this.connection,
-      subject,
-      payload,
-      options.timeoutMs,
-    );
+    const reply = await request(this.connection, subject, payload, options);
     const parsed = rpcResponseSchema(responseSchema).safeParse(reply);
 
     if (!parsed.success) {
@@ -198,8 +213,9 @@ async function request(
   connection: NatsConnection,
   subject: string,
   payload: unknown,
-  timeoutMs = DEFAULT_RPC_TIMEOUT_MS,
+  options: RpcOptions = {},
 ): Promise<unknown> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new UserRpcError(
       "RPC timeout must be a positive integer in milliseconds",
@@ -208,8 +224,13 @@ async function request(
   }
 
   try {
+    const requestHeaders = headers();
+    if (options.requestId) {
+      requestHeaders.set(natsHeaders.requestId, options.requestId);
+    }
     const reply = await connection.request(subject, codec.encode(payload), {
       timeout: timeoutMs,
+      headers: requestHeaders,
     });
 
     try {

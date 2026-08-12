@@ -80,6 +80,7 @@ export async function startUserService(): Promise<RunningUserService> {
           "user.rpc.authenticate",
           "user.rpc.get-by-id",
           "user.rpc.update",
+          "user.rpc.health",
         ],
       },
       "User Service is ready for RPC requests",

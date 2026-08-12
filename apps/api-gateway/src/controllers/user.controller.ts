@@ -23,7 +23,9 @@ export function createUserController(
       try {
         const input = req.params as GetUserRequest;
         requireSelf(req.auth?.sub, input.id);
-        const user = await users.getUser(input);
+        const user = await users.getUser(input, {
+          requestId: String(req.id),
+        });
         res.json(user);
       } catch (error) {
         next(toAppError(error));
@@ -34,7 +36,9 @@ export function createUserController(
         const { id } = req.params as GetUserRequest;
         requireSelf(req.auth?.sub, id);
         const input: UpdateUserRequest = { id, ...(req.body as UpdateUserDto) };
-        const user = await users.updateUser(input);
+        const user = await users.updateUser(input, {
+          requestId: String(req.id),
+        });
         res.json(user);
       } catch (error) {
         next(toAppError(error));
