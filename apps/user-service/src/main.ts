@@ -7,10 +7,11 @@ import {
 import type { Subscription } from "nats";
 import pino from "pino";
 import { config } from "./config/env";
-import { UserPublisher } from "./events/user.publisher";
 import { userEventsStream } from "./events/user-events.stream";
 import { PrismaClient } from "./generated/prisma/client";
 import { registerUserRpcRoutes } from "./handlers/user.handlers";
+import { OutboxRelay } from "./outbox/outbox.relay";
+import { OutboxRepository } from "./outbox/outbox.repository";
 import { UserRepository } from "./repositories/user.repository";
 import { UserService } from "./services/user.service";
 import { BcryptPasswordHasher } from "./utils/password";
@@ -32,6 +33,7 @@ export async function startUserService(): Promise<RunningUserService> {
     adapter: new PrismaPg({ connectionString: config.databaseUrl }),
   });
   let messaging: MessagingClient | undefined;
+  let outboxRelay: OutboxRelay | undefined;
 
   try {
     // Connect to PostgreSQL database
@@ -52,13 +54,19 @@ export async function startUserService(): Promise<RunningUserService> {
     // Initialize the service components
     const repository = new UserRepository(prisma);
     const passwords = new BcryptPasswordHasher(config.passwordSaltRounds);
-    const publisher = new UserPublisher(connectedMessaging);
-    const users = new UserService(repository, passwords, publisher);
+    const runningOutboxRelay = new OutboxRelay(
+      new OutboxRepository(prisma),
+      connectedMessaging.publisher,
+      logger,
+    );
+    outboxRelay = runningOutboxRelay;
+    const users = new UserService(repository, passwords);
     const subscriptions = registerUserRpcRoutes(
       connectedMessaging,
       users,
       logger,
     );
+    runningOutboxRelay.start();
     let shutdownPromise: Promise<void> | undefined;
 
     logger.info(
@@ -79,6 +87,7 @@ export async function startUserService(): Promise<RunningUserService> {
       shutdown(): Promise<void> {
         shutdownPromise ??= drainUserService(
           subscriptions,
+          runningOutboxRelay,
           connectedMessaging,
           prisma,
           logger,
@@ -88,6 +97,7 @@ export async function startUserService(): Promise<RunningUserService> {
     };
   } catch (error) {
     await Promise.allSettled([
+      outboxRelay?.stop() ?? Promise.resolve(),
       messaging?.drain() ?? Promise.resolve(),
       prisma.$disconnect(),
     ]);
@@ -112,6 +122,7 @@ async function main(): Promise<void> {
 // Cleans up the service's subscriptions, messaging connection, and database connection.
 async function drainUserService(
   subscriptions: Subscription[],
+  outboxRelay: OutboxRelay,
   messaging: MessagingClient,
   prisma: PrismaClient,
   logger?: MessagingLogger,
@@ -122,9 +133,13 @@ async function drainUserService(
     await Promise.all(
       subscriptions.map((subscription) => subscription.drain()),
     );
-    await messaging.drain();
+    await outboxRelay.stop();
   } finally {
-    await prisma.$disconnect();
+    try {
+      await messaging.drain();
+    } finally {
+      await prisma.$disconnect();
+    }
   }
 }
 

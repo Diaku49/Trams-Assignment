@@ -1,6 +1,6 @@
 // User business logic: persistence, password hashing, and domain events.
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 import type {
   AuthenticatedUser,
   CreateUserDto,
@@ -8,29 +8,23 @@ import type {
   UpdateUserDto,
   UserCreatedEvent,
   UserResponseDto,
-} from '@app/contracts';
+} from "@app/contracts";
 
-import { UserServiceError } from '../errors/user-service.error';
+import { UserServiceError } from "../errors/user-service.error";
 
 import type {
   CreateUserData,
   UpdateUserData,
   UserRecord,
   UserRepositoryPort,
-} from '../repositories/user.repository';
+} from "../repositories/user.repository";
 
-import type { PasswordHasher } from '../utils/password';
-
-
-export interface UserCreatedEventPublisher {
-  created(event: UserCreatedEvent): Promise<unknown>;
-}
+import type { PasswordHasher } from "../utils/password";
 
 export class UserService {
   constructor(
     private readonly users: UserRepositoryPort,
     private readonly passwords: PasswordHasher,
-    private readonly events: UserCreatedEventPublisher,
   ) {}
 
   async signUp(input: CreateUserDto): Promise<UserResponseDto> {
@@ -38,8 +32,8 @@ export class UserService {
 
     if (existing) {
       throw new UserServiceError(
-        'A user with this email already exists',
-        'EMAIL_ALREADY_IN_USE',
+        "A user with this email already exists",
+        "EMAIL_ALREADY_IN_USE",
       );
     }
 
@@ -49,29 +43,32 @@ export class UserService {
     try {
       user = await this.users.createUser(
         createUserData(input, passwordHash),
+        toUserCreatedEvent,
       );
     } catch (error) {
       if (isUniqueEmailError(error)) {
         throw new UserServiceError(
-          'A user with this email already exists',
-          'EMAIL_ALREADY_IN_USE',
+          "A user with this email already exists",
+          "EMAIL_ALREADY_IN_USE",
         );
       }
 
       throw error;
     }
 
-    await this.events.created(toUserCreatedEvent(user));
     return toUserResponse(user);
   }
 
   async login(input: LoginDto): Promise<AuthenticatedUser> {
     const user = await this.users.getUserByEmail(input.email);
 
-    if (!user || !(await this.passwords.verify(input.password, user.passwordHash))) {
+    if (
+      !user ||
+      !(await this.passwords.verify(input.password, user.passwordHash))
+    ) {
       throw new UserServiceError(
-        'Invalid email or password',
-        'INVALID_CREDENTIALS',
+        "Invalid email or password",
+        "INVALID_CREDENTIALS",
       );
     }
 
@@ -82,10 +79,7 @@ export class UserService {
     return toUserResponse(await this.requireUser(id));
   }
 
-  async updateUser(
-    id: string,
-    input: UpdateUserDto,
-  ): Promise<UserResponseDto> {
+  async updateUser(id: string, input: UpdateUserDto): Promise<UserResponseDto> {
     const passwordHash =
       input.password === undefined
         ? undefined
@@ -100,13 +94,13 @@ export class UserService {
     } catch (error) {
       if (isUniqueEmailError(error)) {
         throw new UserServiceError(
-          'A user with this email already exists',
-          'EMAIL_ALREADY_IN_USE',
+          "A user with this email already exists",
+          "EMAIL_ALREADY_IN_USE",
         );
       }
 
       if (isRecordNotFoundError(error)) {
-        throw new UserServiceError('User not found', 'USER_NOT_FOUND');
+        throw new UserServiceError("User not found", "USER_NOT_FOUND");
       }
 
       throw error;
@@ -117,7 +111,7 @@ export class UserService {
     const user = await this.users.getUser(id);
 
     if (!user) {
-      throw new UserServiceError('User not found', 'USER_NOT_FOUND');
+      throw new UserServiceError("User not found", "USER_NOT_FOUND");
     }
 
     return user;
@@ -168,7 +162,7 @@ function toUserCreatedEvent(user: UserRecord): UserCreatedEvent {
   return {
     eventId: randomUUID(),
     occurredAt: new Date().toISOString(),
-    type: 'user.created',
+    type: "user.created",
     payload: {
       id: user.id,
       email: user.email,
@@ -179,17 +173,17 @@ function toUserCreatedEvent(user: UserRecord): UserCreatedEvent {
 }
 
 function isUniqueEmailError(error: unknown): boolean {
-  return getPrismaErrorCode(error) === 'P2002';
+  return getPrismaErrorCode(error) === "P2002";
 }
 
 function isRecordNotFoundError(error: unknown): boolean {
-  return getPrismaErrorCode(error) === 'P2025';
+  return getPrismaErrorCode(error) === "P2025";
 }
 
 function getPrismaErrorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null || !('code' in error)) {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
     return undefined;
   }
 
-  return typeof error.code === 'string' ? error.code : undefined;
+  return typeof error.code === "string" ? error.code : undefined;
 }

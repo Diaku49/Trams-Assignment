@@ -1,6 +1,7 @@
 // Prisma persistence for User Service. Password hashes never leave this layer.
 
-import type { PrismaClient } from '../generated/prisma/client';
+import { subjects, type UserCreatedEvent } from "@app/contracts";
+import type { Prisma, PrismaClient } from "../generated/prisma/client";
 
 export interface UserRecord {
   id: string;
@@ -24,13 +25,16 @@ export interface UpdateUserData {
 }
 
 export interface UserRepositoryPort {
-  createUser(data: CreateUserData): Promise<UserRecord>;
+  createUser(
+    data: CreateUserData,
+    createEvent: (user: UserRecord) => UserCreatedEvent,
+  ): Promise<UserRecord>;
   getUser(id: string): Promise<UserRecord | null>;
   getUserByEmail(email: string): Promise<UserRecord | null>;
   updateUser(id: string, data: UpdateUserData): Promise<UserRecord>;
 }
 
-export type UserDatabase = Pick<PrismaClient, 'user'>;
+export type UserDatabase = PrismaClient;
 
 const userSelect = {
   id: true,
@@ -41,18 +45,30 @@ const userSelect = {
   updatedAt: true,
 } as const;
 
-
 export class UserRepository implements UserRepositoryPort {
   constructor(private readonly database: UserDatabase) {}
 
-  async createUser(data: CreateUserData): Promise<UserRecord> {
-    return this.database.user.create({
-      data: {
-        email: data.email,
-        passwordHash: data.passwordHash,
-        ...(data.name !== undefined ? { name: data.name } : {}),
-      },
-      select: userSelect,
+  /** Atomically commits the user and the event that must follow that write. */
+  async createUser(
+    data: CreateUserData,
+    createEvent: (user: UserRecord) => UserCreatedEvent,
+  ): Promise<UserRecord> {
+    return this.database.$transaction(async (transaction) => {
+      const user = await transaction.user.create({
+        data: toPrismaCreateData(data),
+        select: userSelect,
+      });
+      const event = createEvent(user);
+
+      await transaction.outboxEvent.create({
+        data: {
+          id: event.eventId,
+          subject: subjects.userCreated,
+          payload: toJsonPayload(event),
+        },
+      });
+
+      return user;
     });
   }
 
@@ -74,7 +90,7 @@ export class UserRepository implements UserRepositoryPort {
     const update = toPrismaUpdateData(data);
 
     if (Object.keys(update).length === 0) {
-      throw new Error('At least one user field is required for an update');
+      throw new Error("At least one user field is required for an update");
     }
 
     return this.database.user.update({
@@ -85,10 +101,34 @@ export class UserRepository implements UserRepositoryPort {
   }
 }
 
+function toPrismaCreateData(data: CreateUserData): CreateUserData {
+  return {
+    email: data.email,
+    passwordHash: data.passwordHash,
+    ...(data.name !== undefined ? { name: data.name } : {}),
+  };
+}
+
 function toPrismaUpdateData(data: UpdateUserData): UpdateUserData {
   return {
     ...(data.email !== undefined ? { email: data.email } : {}),
-    ...(data.passwordHash !== undefined ? { passwordHash: data.passwordHash } : {}),
+    ...(data.passwordHash !== undefined
+      ? { passwordHash: data.passwordHash }
+      : {}),
     ...(data.name !== undefined ? { name: data.name } : {}),
+  };
+}
+
+function toJsonPayload(event: UserCreatedEvent): Prisma.InputJsonObject {
+  return {
+    eventId: event.eventId,
+    occurredAt: event.occurredAt,
+    type: event.type,
+    payload: {
+      id: event.payload.id,
+      email: event.payload.email,
+      name: event.payload.name,
+      createdAt: event.payload.createdAt,
+    },
   };
 }

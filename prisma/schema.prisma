@@ -18,3 +18,22 @@ model User {
 
   @@map("users")
 }
+
+// Events are committed here in the same transaction as domain writes. A
+// background relay publishes them to JetStream and marks them as delivered.
+model OutboxEvent {
+  id            String    @id @db.Uuid
+  subject       String
+  payload       Json
+  createdAt     DateTime  @default(now())
+  nextAttemptAt DateTime  @default(now())
+  publishedAt   DateTime?
+  attempts      Int       @default(0)
+  lockedAt      DateTime?
+  lockedBy      String?
+  lastError     String?
+
+  @@index([publishedAt, nextAttemptAt])
+  @@index([lockedAt])
+  @@map("outbox_events")
+}
