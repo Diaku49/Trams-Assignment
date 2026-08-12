@@ -20,7 +20,10 @@ export function createApp(dependencies: GatewayAppDependencies): Express {
 
   app.use(
     pinoHttp({
-      logger: dependencies.logger,
+      // Let pino-http create the request logger with its own Pino dependency.
+      // Passing a logger from another workspace can cross Pino package copies,
+      // whose internal symbols are intentionally not compatible.
+      level: dependencies.logger.level,
       genReqId(req, res) {
         const incoming = req.headers["x-request-id"];
         const requestId =

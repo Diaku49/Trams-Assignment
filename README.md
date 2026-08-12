@@ -148,10 +148,11 @@ npm run dlq:replay -- 42       # Dry-run replay of DLQ stream sequence 42
 npm run dlq:replay -- 42 --execute
 ```
 
-Run `npm run build` before submitting or deploying. `npm test` delegates to
-workspace test scripts; add focused unit, integration, and API tests as the
-application grows. The current repository does not yet include application
-test suites, so a successful command can mean that no test files ran.
+Run `npm run build` before submitting or deploying. `npm test` runs a small,
+focused suite covering Gateway validation/forwarding, User Service signup and
+event safety, and Notification Service idempotency. The suite is deliberately
+minimal for this assignment; broader database, broker, and end-to-end coverage
+would be the next step for a production system.
 
 ## Operations and failure handling
 
