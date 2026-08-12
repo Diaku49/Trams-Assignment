@@ -7,7 +7,6 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../../libs/contracts" },
-    { "path": "../../libs/messaging" },
-    { "path": "../../libs/user-client" }
+    { "path": "../../libs/messaging" }
   ]
 }

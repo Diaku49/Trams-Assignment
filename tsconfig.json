@@ -23,9 +23,7 @@
       "@app/contracts": ["./libs/contracts/src"],
       "@app/contracts/*": ["./libs/contracts/src/*"],
       "@app/messaging": ["./libs/messaging/src"],
-      "@app/messaging/*": ["./libs/messaging/src/*"],
-      "@app/user-client": ["./libs/user-client/src"],
-      "@app/user-client/*": ["./libs/user-client/src/*"]
+      "@app/messaging/*": ["./libs/messaging/src/*"]
     }
   },
   "exclude": ["node_modules", "**/dist"]

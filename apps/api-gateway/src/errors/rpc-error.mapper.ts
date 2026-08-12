@@ -1,6 +1,6 @@
 // Converts NATS RPC failures into client-safe HTTP errors.
 
-import { RpcError } from "@app/messaging";
+import { UserRpcError } from "../nats/user-rpc.client";
 import { AppError } from "./app-error";
 
 export function toAppError(error: unknown): AppError {
@@ -8,7 +8,7 @@ export function toAppError(error: unknown): AppError {
     return error;
   }
 
-  if (!(error instanceof RpcError)) {
+  if (!(error instanceof UserRpcError)) {
     return new AppError("Internal server error", 500);
   }
 

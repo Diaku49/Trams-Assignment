@@ -5,19 +5,18 @@ import {
   Events,
   type ConnectionOptions,
   type NatsConnection,
-} from 'nats';
-import { JetStreamConsumer } from './pub-sub/consumer';
-import { JetStreamPublisher } from './pub-sub/publisher';
-import { JetStreamStreams } from './pub-sub/stream-bootstrap';
-import { RpcClient } from './rpc/rpc';
-import type { MessagingLogger } from './types';
+} from "nats";
+import { JetStreamConsumer } from "./pub-sub/consumer";
+import { JetStreamPublisher } from "./pub-sub/publisher";
+import { JetStreamStreams } from "./pub-sub/stream-bootstrap";
+import type { MessagingLogger } from "./types";
 
 export interface NatsConnectionConfig {
   servers: string | string[];
   name: string;
   user: string;
   password: string;
-  tls?: ConnectionOptions['tls'];
+  tls?: ConnectionOptions["tls"];
   connectTimeoutMs?: number;
   maxReconnectAttempts?: number;
   reconnectDelayMs?: number;
@@ -29,33 +28,32 @@ const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
 /** Transport-only facade. All namespaces share exactly one underlying NATS socket. */
 export class MessagingClient {
-  readonly rpc: RpcClient;
   readonly publisher: JetStreamPublisher;
   readonly consumer: JetStreamConsumer;
   readonly streams: JetStreamStreams;
 
   constructor(
-    private readonly connection: NatsConnection,
+    /** Raw Core-NATS connection for service-owned request/reply subscriptions. */
+    readonly nats: NatsConnection,
     private readonly name: string,
     private readonly logger?: MessagingLogger,
   ) {
-    this.rpc = new RpcClient(connection);
-    this.publisher = new JetStreamPublisher(connection);
-    this.consumer = new JetStreamConsumer(connection, logger);
-    this.streams = new JetStreamStreams(connection, logger);
+    this.publisher = new JetStreamPublisher(nats);
+    this.consumer = new JetStreamConsumer(nats, logger);
+    this.streams = new JetStreamStreams(nats, logger);
   }
 
   isClosed(): boolean {
-    return this.connection.isClosed();
+    return this.nats.isClosed();
   }
 
   async drain(): Promise<void> {
-    if (this.connection.isClosed()) {
+    if (this.nats.isClosed()) {
       return;
     }
 
-    this.logger?.info({ name: this.name }, 'Draining NATS connection');
-    await this.connection.drain();
+    this.logger?.info({ name: this.name }, "Draining NATS connection");
+    await this.nats.drain();
   }
 }
 
@@ -71,15 +69,14 @@ export async function connectNats(
     tls: config.tls,
     reconnect: true,
     maxReconnectAttempts: config.maxReconnectAttempts ?? -1,
-    reconnectTimeWait:
-      config.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
+    reconnectTimeWait: config.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
     reconnectJitter: 250,
     timeout: config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
   });
 
   config.logger?.info(
     { name: config.name, servers: config.servers },
-    'Connected to NATS',
+    "Connected to NATS",
   );
 
   void watchNatsStatus(connection, config.name, config.logger);
@@ -87,12 +84,12 @@ export async function connectNats(
     if (error) {
       config.logger?.error(
         { name: config.name, error: error.message },
-        'NATS connection closed with an error',
+        "NATS connection closed with an error",
       );
       return;
     }
 
-    config.logger?.info({ name: config.name }, 'NATS connection closed');
+    config.logger?.info({ name: config.name }, "NATS connection closed");
   });
 
   return new MessagingClient(connection, config.name, config.logger);
@@ -113,11 +110,11 @@ async function watchNatsStatus(
       };
 
       if (status.type === Events.Disconnect) {
-        logger?.warn(context, 'Disconnected from NATS; reconnecting');
+        logger?.warn(context, "Disconnected from NATS; reconnecting");
       } else if (status.type === Events.Reconnect) {
-        logger?.info(context, 'Reconnected to NATS');
+        logger?.info(context, "Reconnected to NATS");
       } else if (status.type === Events.Error) {
-        logger?.error(context, 'NATS reported a connection error');
+        logger?.error(context, "NATS reported a connection error");
       }
     }
   } catch (error) {
@@ -126,7 +123,7 @@ async function watchNatsStatus(
         name,
         error: error instanceof Error ? error.message : String(error),
       },
-      'NATS status observer stopped unexpectedly',
+      "NATS status observer stopped unexpectedly",
     );
   }
 }

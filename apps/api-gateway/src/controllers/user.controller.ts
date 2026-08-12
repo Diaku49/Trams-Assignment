@@ -8,7 +8,7 @@ import type {
 import type { RequestHandler } from "express";
 import { AppError } from "../errors/app-error";
 import { toAppError } from "../errors/rpc-error.mapper";
-import type { UserServiceRpcClient } from "../nats/rpc-client";
+import type { UserServiceRpcClient } from "../nats/user-rpc.client";
 
 export interface UserController {
   getUser: RequestHandler;

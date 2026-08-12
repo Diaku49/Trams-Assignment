@@ -62,7 +62,7 @@ export async function startUserService(): Promise<RunningUserService> {
     outboxRelay = runningOutboxRelay;
     const users = new UserService(repository, passwords);
     const subscriptions = registerUserRpcRoutes(
-      connectedMessaging,
+      connectedMessaging.nats,
       users,
       logger,
     );

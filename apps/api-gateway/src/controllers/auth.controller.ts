@@ -7,7 +7,7 @@ import {
 } from "@app/contracts";
 import type { RequestHandler } from "express";
 import { toAppError } from "../errors/rpc-error.mapper";
-import type { UserServiceRpcClient } from "../nats/rpc-client";
+import type { UserServiceRpcClient } from "../nats/user-rpc.client";
 import type { JwtTokenService } from "../utils/jwt";
 
 export interface AuthController {

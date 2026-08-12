@@ -1,4 +1,5 @@
-// Subscribes to User Service RPC subjects and dispatches validated input.
+// Concrete User Service request/reply subscriptions. The messaging library
+// supplies the NATS connection; this service owns its subjects and contracts.
 
 import {
   authenticatedUserSchema,
@@ -12,15 +13,21 @@ import {
   userResponseDtoSchema,
   type AuthenticatedUser,
   type CreateUserDto,
-  type RpcFailure,
   type LoginDto,
+  type RpcFailure,
   type UpdateUserRequest,
   type UserResponseDto,
 } from "@app/contracts";
-import type { MessagingClient, MessagingLogger } from "@app/messaging";
-import type { Subscription } from "nats";
-import type { ZodType } from "zod";
+import type { MessagingLogger } from "@app/messaging";
+import {
+  JSONCodec,
+  type Msg,
+  type NatsConnection,
+  type Subscription,
+} from "nats";
 import { UserServiceError } from "../errors/user-service.error";
+
+const codec = JSONCodec<unknown>();
 
 export interface UserRpcOperations {
   signUp(input: CreateUserDto): Promise<UserResponseDto>;
@@ -33,112 +40,191 @@ export interface UserRpcOperations {
 }
 
 export function registerUserRpcRoutes(
-  messaging: MessagingClient,
+  connection: NatsConnection,
   users: UserRpcOperations,
   logger?: MessagingLogger,
 ): Subscription[] {
   return [
-    messaging.rpc.respond(
-      subjects.userRpcCreate,
-      createRoute(
-        subjects.userRpcCreate,
-        createUserDtoSchema,
-        userResponseDtoSchema,
-        (input) => users.signUp(input),
-        logger,
-      ),
-      { onError: createErrorResponder(logger, subjects.userRpcCreate) },
-    ),
-    messaging.rpc.respond(
-      subjects.userRpcAuthenticate,
-      createRoute(
-        subjects.userRpcAuthenticate,
-        loginDtoSchema,
-        authenticatedUserSchema,
-        (input) => users.login(input),
-        logger,
-      ),
-      { onError: createErrorResponder(logger, subjects.userRpcAuthenticate) },
-    ),
-    messaging.rpc.respond(
-      subjects.userRpcGetById,
-      createRoute(
-        subjects.userRpcGetById,
-        getUserRequestSchema,
-        userResponseDtoSchema,
-        (input) => users.getUser(input.id),
-        logger,
-      ),
-      { onError: createErrorResponder(logger, subjects.userRpcGetById) },
-    ),
-    messaging.rpc.respond(
-      subjects.userRpcUpdate,
-      createRoute(
-        subjects.userRpcUpdate,
-        updateUserRequestSchema,
-        userResponseDtoSchema,
-        ({ id, ...input }) => users.updateUser(id, input),
-        logger,
-      ),
-      { onError: createErrorResponder(logger, subjects.userRpcUpdate) },
-    ),
+    connection.subscribe(subjects.userRpcCreate, {
+      callback: (error, message) => {
+        if (error) {
+          logSubscriptionError(logger, subjects.userRpcCreate, error);
+          return;
+        }
+        void handleSignUp(message, users, logger);
+      },
+    }),
+    connection.subscribe(subjects.userRpcAuthenticate, {
+      callback: (error, message) => {
+        if (error) {
+          logSubscriptionError(logger, subjects.userRpcAuthenticate, error);
+          return;
+        }
+        void handleLogin(message, users, logger);
+      },
+    }),
+    connection.subscribe(subjects.userRpcGetById, {
+      callback: (error, message) => {
+        if (error) {
+          logSubscriptionError(logger, subjects.userRpcGetById, error);
+          return;
+        }
+        void handleGetUser(message, users, logger);
+      },
+    }),
+    connection.subscribe(subjects.userRpcUpdate, {
+      callback: (error, message) => {
+        if (error) {
+          logSubscriptionError(logger, subjects.userRpcUpdate, error);
+          return;
+        }
+        void handleUpdateUser(message, users, logger);
+      },
+    }),
   ];
 }
 
-function createRoute<TInput, TOutput>(
-  subject: string,
-  requestSchema: ZodType<TInput>,
-  responseSchema: ZodType<TOutput>,
-  operation: (input: TInput) => Promise<TOutput>,
+async function handleSignUp(
+  message: Msg,
+  users: UserRpcOperations,
   logger?: MessagingLogger,
-): (payload: unknown) => Promise<unknown> {
-  return async (payload) => {
-    const request = requestSchema.safeParse(payload);
+): Promise<void> {
+  const input = createUserDtoSchema.safeParse(decode(message));
 
-    if (!request.success) {
-      const error = createRpcFailure({
-        code: "INVALID_REQUEST",
-        message: "RPC request does not match its contract",
-        details: request.error.flatten(),
-      });
-      logRouteError(logger, subject, error);
-      return error;
-    }
+  if (!input.success) {
+    respondInvalidRequest(
+      message,
+      subjects.userRpcCreate,
+      input.error.flatten(),
+      logger,
+    );
+    return;
+  }
 
-    try {
-      const result = await operation(request.data);
-      const response = responseSchema.safeParse(result);
-
-      if (!response.success) {
-        const error = createRpcFailure({
-          code: "INTERNAL_ERROR",
-          message: "User Service produced an invalid RPC response",
-        });
-        logger?.error(
-          { subject, details: response.error.flatten() },
-          "User RPC response failed validation",
-        );
-        return error;
-      }
-
-      return createRpcSuccess(response.data);
-    } catch (error) {
-      const failure = toRpcFailure(error);
-      logRouteError(logger, subject, failure, error);
-      return failure;
-    }
-  };
+  try {
+    const user = userResponseDtoSchema.parse(await users.signUp(input.data));
+    respond(message, createRpcSuccess(user));
+  } catch (error) {
+    respondWithError(message, subjects.userRpcCreate, error, logger);
+  }
 }
 
-function createErrorResponder(
-  logger: MessagingLogger | undefined,
+async function handleLogin(
+  message: Msg,
+  users: UserRpcOperations,
+  logger?: MessagingLogger,
+): Promise<void> {
+  const input = loginDtoSchema.safeParse(decode(message));
+
+  if (!input.success) {
+    respondInvalidRequest(
+      message,
+      subjects.userRpcAuthenticate,
+      input.error.flatten(),
+      logger,
+    );
+    return;
+  }
+
+  try {
+    const user = authenticatedUserSchema.parse(await users.login(input.data));
+    respond(message, createRpcSuccess(user));
+  } catch (error) {
+    respondWithError(message, subjects.userRpcAuthenticate, error, logger);
+  }
+}
+
+async function handleGetUser(
+  message: Msg,
+  users: UserRpcOperations,
+  logger?: MessagingLogger,
+): Promise<void> {
+  const input = getUserRequestSchema.safeParse(decode(message));
+
+  if (!input.success) {
+    respondInvalidRequest(
+      message,
+      subjects.userRpcGetById,
+      input.error.flatten(),
+      logger,
+    );
+    return;
+  }
+
+  try {
+    const user = userResponseDtoSchema.parse(
+      await users.getUser(input.data.id),
+    );
+    respond(message, createRpcSuccess(user));
+  } catch (error) {
+    respondWithError(message, subjects.userRpcGetById, error, logger);
+  }
+}
+
+async function handleUpdateUser(
+  message: Msg,
+  users: UserRpcOperations,
+  logger?: MessagingLogger,
+): Promise<void> {
+  const input = updateUserRequestSchema.safeParse(decode(message));
+
+  if (!input.success) {
+    respondInvalidRequest(
+      message,
+      subjects.userRpcUpdate,
+      input.error.flatten(),
+      logger,
+    );
+    return;
+  }
+
+  try {
+    const { id, ...update } = input.data;
+    const user = userResponseDtoSchema.parse(
+      await users.updateUser(id, update),
+    );
+    respond(message, createRpcSuccess(user));
+  } catch (error) {
+    respondWithError(message, subjects.userRpcUpdate, error, logger);
+  }
+}
+
+function decode(message: Msg): unknown {
+  try {
+    return codec.decode(message.data);
+  } catch {
+    return undefined;
+  }
+}
+
+function respond(message: Msg, payload: unknown): void {
+  message.respond(codec.encode(payload));
+}
+
+function respondInvalidRequest(
+  message: Msg,
   subject: string,
-): (error: unknown) => RpcFailure {
-  return (error) => {
-    const failure = toRpcFailure(error);
-    logRouteError(logger, subject, failure, error);
-    return failure;
-  };
+  details: unknown,
+  logger?: MessagingLogger,
+): void {
+  const failure = createRpcFailure({
+    code: "INVALID_REQUEST",
+    message: "RPC request does not match its contract",
+    details,
+  });
+  logRouteError(logger, subject, failure);
+  respond(message, failure);
+}
+
+function respondWithError(
+  message: Msg,
+  subject: string,
+  error: unknown,
+  logger?: MessagingLogger,
+): void {
+  const failure = toRpcFailure(error);
+  logRouteError(logger, subject, failure, error);
+  respond(message, failure);
 }
 
 function toRpcFailure(error: unknown): RpcFailure {
@@ -150,6 +236,17 @@ function toRpcFailure(error: unknown): RpcFailure {
     code: "INTERNAL_ERROR",
     message: "Unable to process User Service request",
   });
+}
+
+function logSubscriptionError(
+  logger: MessagingLogger | undefined,
+  subject: string,
+  error: Error,
+): void {
+  logger?.error(
+    { subject, error: error.message },
+    "User RPC subscription failed",
+  );
 }
 
 function logRouteError(

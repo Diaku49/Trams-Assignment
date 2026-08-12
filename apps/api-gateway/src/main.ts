@@ -1,13 +1,12 @@
 // API Gateway composition root: NATS client, JWTs, Express, graceful shutdown.
 
 import type { Server } from "node:http";
-import { UserRpcClient } from "@app/user-client";
 import pino from "pino";
 import { createApp } from "./app";
 import { config } from "./config/env";
 import { createAuthController } from "./controllers/auth.controller";
 import { createUserController } from "./controllers/user.controller";
-import { connectGatewayNats } from "./nats/rpc-client";
+import { connectGatewayNats, UserRpcClient } from "./nats/user-rpc.client";
 import { JwtService } from "./utils/jwt";
 
 const logger = pino({ name: "api-gateway", level: config.logLevel });
@@ -18,7 +17,7 @@ export interface RunningGateway {
 
 export async function startGateway(): Promise<RunningGateway> {
   const messaging = await connectGatewayNats(config.nats, logger);
-  const users = new UserRpcClient(messaging.rpc);
+  const users = new UserRpcClient(messaging.nats);
   const tokens = new JwtService(config.jwt);
   const app = createApp({
     auth: createAuthController(users, tokens, config.jwt.expiresIn),
