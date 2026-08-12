@@ -38,6 +38,7 @@ export interface UserRpcOperations {
     id: string,
     input: Omit<UpdateUserRequest, "id">,
   ): Promise<UserResponseDto>;
+  checkHealth(): Promise<void>;
 }
 
 export function registerUserRpcRoutes(
@@ -54,8 +55,7 @@ export function registerUserRpcRoutes(
           logSubscriptionError(logger, subjects.userRpcHealth, error);
           return;
         }
-        respond(message, createRpcSuccess({ status: "ok" }));
-        logRouteSuccess(logger, subjects.userRpcHealth, message);
+        void handleHealth(message, users, logger);
       },
     }),
     connection.subscribe(subjects.userRpcCreate, {
@@ -99,6 +99,20 @@ export function registerUserRpcRoutes(
       },
     }),
   ];
+}
+
+async function handleHealth(
+  message: Msg,
+  users: UserRpcOperations,
+  logger?: MessagingLogger,
+): Promise<void> {
+  try {
+    await users.checkHealth();
+    respond(message, createRpcSuccess({ status: "ok" }));
+    logRouteSuccess(logger, subjects.userRpcHealth, message);
+  } catch (error) {
+    respondWithError(message, subjects.userRpcHealth, error, logger);
+  }
 }
 
 async function handleSignUp(

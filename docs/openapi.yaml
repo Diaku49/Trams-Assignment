@@ -30,10 +30,10 @@ paths:
     get:
       tags: [Health]
       summary: Gateway readiness
-      description: Performs a short private NATS RPC health check against User Service.
+      description: Performs a short private NATS RPC health check against User Service; that operation also runs a lightweight PostgreSQL query in User Service.
       responses:
         "200":
-          description: NATS and a User Service responder are available
+          description: NATS, a User Service responder, and the User Service database are available
           content:
             application/json:
               schema:
@@ -47,7 +47,7 @@ paths:
       description: Alias for `/api/health/ready`.
       responses:
         "200":
-          description: NATS and a User Service responder are available
+          description: NATS, a User Service responder, and the User Service database are available
           content:
             application/json:
               schema:
@@ -296,7 +296,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     DependencyUnavailable:
-      description: NATS or User Service is unavailable.
+      description: NATS, User Service, or the User Service database is unavailable.
       content:
         application/json:
           schema:

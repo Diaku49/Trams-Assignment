@@ -37,6 +37,8 @@ export interface StartedDurableConsumer {
   /** Close this during the consuming service's graceful shutdown. */
   messages: ConsumerMessages;
   durableName: string;
+  /** Whether the local pull-consumer processing loop is still active. */
+  isRunning(): boolean;
 }
 
 /**
@@ -58,15 +60,40 @@ export class JetStreamConsumer {
       max_messages: resolved.maxAckPending,
     });
 
+    let isRunning = true;
     // This processor waits asynchronously and does not block the Node.js thread.
-    void processMessages(this.connection, messages, resolved, this.logger);
+    // Keep its state so the owning service can fail readiness if it stops.
+    void processMessages(this.connection, messages, resolved, this.logger).then(
+      () => {
+        isRunning = false;
+        this.logger?.warn(
+          { stream: resolved.stream, durable: resolved.durableName },
+          "Durable JetStream consumer stopped",
+        );
+      },
+      (error: unknown) => {
+        isRunning = false;
+        this.logger?.error(
+          {
+            stream: resolved.stream,
+            durable: resolved.durableName,
+            error: errorMessage(error),
+          },
+          "Durable JetStream consumer failed",
+        );
+      },
+    );
 
     this.logger?.info(
       { stream: resolved.stream, durable: resolved.durableName },
       "Started durable JetStream consumer",
     );
 
-    return { messages, durableName: resolved.durableName };
+    return {
+      messages,
+      durableName: resolved.durableName,
+      isRunning: () => isRunning,
+    };
   }
 }
 
@@ -128,39 +155,28 @@ async function processMessages<TEvent>(
   config: ResolvedConsumerConfig<TEvent>,
   logger?: MessagingLogger,
 ): Promise<void> {
-  try {
-    for await (const message of messages) {
-      let event: TEvent;
+  for await (const message of messages) {
+    let event: TEvent;
 
-      try {
-        event = config.decode(message.data);
-      } catch (error) {
-        await preserveMalformedMessage(
-          connection,
-          message,
-          config,
-          error,
-          logger,
-        );
-        continue;
-      }
-
-      try {
-        await config.handleEvent(event);
-        message.ack();
-      } catch (error) {
-        await handleFailure(connection, message, event, config, error, logger);
-      }
+    try {
+      event = config.decode(message.data);
+    } catch (error) {
+      await preserveMalformedMessage(
+        connection,
+        message,
+        config,
+        error,
+        logger,
+      );
+      continue;
     }
-  } catch (error) {
-    logger?.error(
-      {
-        stream: config.stream,
-        durable: config.durableName,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      "Durable consumer stopped unexpectedly",
-    );
+
+    try {
+      await config.handleEvent(event);
+      message.ack();
+    } catch (error) {
+      await handleFailure(connection, message, event, config, error, logger);
+    }
   }
 }
 

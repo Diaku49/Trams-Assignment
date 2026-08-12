@@ -1,6 +1,7 @@
-// Notification Service composition root. No HTTP server is exposed.
+// Notification Service composition root. Its health probe binds to loopback only.
 
 import { PrismaPg } from "@prisma/adapter-pg";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import {
   connectNats,
   type MessagingClient,
@@ -22,6 +23,7 @@ const logger = pino({
 export interface RunningNotificationService {
   messaging: MessagingClient;
   consumer: StartedDurableConsumer;
+  isReady(): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -30,6 +32,8 @@ export async function startNotificationService(): Promise<RunningNotificationSer
     adapter: new PrismaPg({ connectionString: config.databaseUrl }),
   });
   let messaging: MessagingClient | undefined;
+  let consumer: StartedDurableConsumer | undefined;
+  let healthServer: Server | undefined;
 
   try {
     await prisma.$connect();
@@ -51,23 +55,37 @@ export async function startNotificationService(): Promise<RunningNotificationSer
       logger,
       { leaseDurationMs: config.deliveryLeaseMs },
     );
-    const consumer = await new UserEventsConsumer(connectedMessaging).startCreated(
-      config.consumer,
-      (event) => notifications.handleUserCreated(event),
+    const startedConsumer = await new UserEventsConsumer(
+      connectedMessaging,
+    ).startCreated(config.consumer, (event) =>
+      notifications.handleUserCreated(event),
     );
+    consumer = startedConsumer;
+    const isReady = (): Promise<void> =>
+      assertNotificationReadiness(prisma, connectedMessaging, startedConsumer);
+    const startedHealthServer = await startHealthServer(
+      config.healthPort,
+      isReady,
+    );
+    healthServer = startedHealthServer;
     let shutdownPromise: Promise<void> | undefined;
 
     logger.info(
-      { durableName: consumer.durableName },
+      {
+        durableName: startedConsumer.durableName,
+        healthPort: config.healthPort,
+      },
       "Notification Service is ready for user.created events",
     );
 
     return {
       messaging,
-      consumer,
+      consumer: startedConsumer,
+      isReady,
       shutdown(): Promise<void> {
         shutdownPromise ??= shutdownNotificationService(
-          consumer,
+          startedHealthServer,
+          startedConsumer,
           connectedMessaging,
           prisma,
         );
@@ -76,6 +94,8 @@ export async function startNotificationService(): Promise<RunningNotificationSer
     };
   } catch (error) {
     await Promise.allSettled([
+      healthServer ? closeHttpServer(healthServer) : Promise.resolve(),
+      consumer?.messages.close() ?? Promise.resolve(),
       messaging?.drain() ?? Promise.resolve(),
       prisma.$disconnect(),
     ]);
@@ -97,6 +117,7 @@ async function main(): Promise<void> {
 }
 
 async function shutdownNotificationService(
+  healthServer: Server,
   consumer: StartedDurableConsumer,
   messaging: MessagingClient,
   prisma: PrismaClient,
@@ -107,6 +128,7 @@ async function shutdownNotificationService(
   );
 
   try {
+    await closeHttpServer(healthServer);
     await consumer.messages.close();
   } finally {
     try {
@@ -115,6 +137,101 @@ async function shutdownNotificationService(
       await prisma.$disconnect();
     }
   }
+}
+
+async function assertNotificationReadiness(
+  prisma: PrismaClient,
+  messaging: MessagingClient,
+  consumer: StartedDurableConsumer,
+): Promise<void> {
+  if (!consumer.isRunning()) {
+    throw new Error("Notification JetStream consumer is not running");
+  }
+
+  await Promise.all([
+    withTimeout(prisma.$queryRaw`SELECT 1`, 1_000, "Notification database"),
+    messaging.ping(1_000),
+  ]);
+}
+
+function startHealthServer(
+  port: number,
+  isReady: () => Promise<void>,
+): Promise<Server> {
+  const server = createServer((request, response) => {
+    void handleHealthRequest(request.url, response, isReady);
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      logger.info({ port }, "Notification health probe is listening locally");
+      resolve(server);
+    });
+  });
+}
+
+async function handleHealthRequest(
+  url: string | undefined,
+  response: ServerResponse,
+  isReady: () => Promise<void>,
+): Promise<void> {
+  if (url === "/health/live") {
+    respondJson(response, 200, { status: "ok", check: "liveness" });
+    return;
+  }
+
+  if (url !== "/health/ready") {
+    respondJson(response, 404, { status: "not_found" });
+    return;
+  }
+
+  try {
+    await isReady();
+    respondJson(response, 200, { status: "ok", check: "readiness" });
+  } catch (error) {
+    logger.warn(
+      { error: errorMessage(error) },
+      "Notification Service readiness check failed",
+    );
+    respondJson(response, 503, { status: "unavailable", check: "readiness" });
+  }
+}
+
+function respondJson(
+  response: ServerResponse,
+  statusCode: number,
+  body: Record<string, string>,
+): void {
+  response.writeHead(statusCode, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+
+function closeHttpServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  dependency: string,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`${dependency} timed out`)),
+      timeoutMs,
+    );
+  });
+
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
 }
 
 function errorMessage(error: unknown): string {

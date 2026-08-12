@@ -32,6 +32,7 @@ export interface UserRepositoryPort {
   getUser(id: string): Promise<UserRecord | null>;
   getUserByEmail(email: string): Promise<UserRecord | null>;
   updateUser(id: string, data: UpdateUserData): Promise<UserRecord>;
+  checkHealth(): Promise<void>;
 }
 
 export type UserDatabase = PrismaClient;
@@ -98,6 +99,11 @@ export class UserRepository implements UserRepositoryPort {
       data: update,
       select: userSelect,
     });
+  }
+
+  /** A minimal query for readiness checks; it verifies a usable DB connection. */
+  async checkHealth(): Promise<void> {
+    await this.database.$queryRaw`SELECT 1`;
   }
 }
 

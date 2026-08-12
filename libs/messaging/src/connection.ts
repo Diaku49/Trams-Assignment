@@ -47,6 +47,15 @@ export class MessagingClient {
     return this.nats.isClosed();
   }
 
+  /** Verifies that an open connection can complete a broker round trip. */
+  async ping(timeoutMs = 1_000): Promise<void> {
+    if (this.nats.isClosed()) {
+      throw new Error("NATS connection is closed");
+    }
+
+    await withTimeout(this.nats.flush(), timeoutMs, "NATS ping");
+  }
+
   async drain(): Promise<void> {
     if (this.nats.isClosed()) {
       return;
@@ -55,6 +64,27 @@ export class MessagingClient {
     this.logger?.info({ name: this.name }, "Draining NATS connection");
     await this.nats.drain();
   }
+}
+
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  operationName: string,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`${operationName} timed out`)),
+      timeoutMs,
+    );
+  });
+
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
 }
 
 /** Opens one long-lived connection and returns its SDK-style client facade. */

@@ -144,6 +144,12 @@ malformed records.
 - Gateway uses `pino-http`, redacts Authorization/cookie headers, and adds an
   `x-request-id` response header. The same value travels on NATS RPC headers
   and is logged by User Service.
+- Gateway readiness performs a User Service RPC which executes a lightweight
+  PostgreSQL `SELECT 1`; it therefore verifies Gateway-to-NATS, an available
+  User Service worker, and the User Service database. Notification Service has
+  loopback-only operational health endpoints. Its readiness verifies its
+  PostgreSQL database, a NATS ping, and that its local JetStream consumer loop
+  remains active.
 
 For endpoint-level request and response schemas, see
 [docs/openapi.yaml](openapi.yaml).

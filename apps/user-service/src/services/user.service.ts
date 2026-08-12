@@ -107,6 +107,11 @@ export class UserService {
     }
   }
 
+  /** Readiness must cover User Service's database, not only NATS request/reply. */
+  async checkHealth(): Promise<void> {
+    await this.users.checkHealth();
+  }
+
   private async requireUser(id: string): Promise<UserRecord> {
     const user = await this.users.getUser(id);
 

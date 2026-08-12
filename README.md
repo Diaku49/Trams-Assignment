@@ -157,8 +157,16 @@ test suites, so a successful command can mean that no test files ran.
 
 `GET /api/health/live` confirms only that the Gateway process can answer HTTP.
 `GET /api/health/ready` (and the backwards-compatible `/api/health`) makes a
-short NATS RPC health call, so it returns `503` if NATS or User Service is not
-available.
+short NATS RPC health call that also executes `SELECT 1` against the User
+Service database. It returns `503` if NATS, User Service, or its database is
+not available.
+
+Notification Service exposes its operational health probe only on the
+container's/local machine's loopback interface: `GET /health/live` and
+`GET /health/ready` on `NOTIFICATION_HEALTH_PORT` (default `3001`). Its
+readiness requires a PostgreSQL query, a NATS ping, and an active JetStream
+consumer; Compose uses it for the service health check but does not publish the
+port or use it for service-to-service communication.
 
 Every Gateway response has `x-request-id`. A valid incoming value is kept;
 otherwise the Gateway generates a UUID. Request logs use `pino-http`, redact

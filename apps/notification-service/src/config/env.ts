@@ -5,6 +5,7 @@ import { z } from "zod";
 
 export interface NotificationServiceConfig {
   logLevel: "fatal" | "error" | "warn" | "info" | "debug" | "trace";
+  healthPort: number;
   databaseUrl: string;
   nats: {
     url: string;
@@ -27,6 +28,12 @@ const schema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
+  NOTIFICATION_HEALTH_PORT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(65535)
+    .default(3001),
   NOTIFICATION_DATABASE_URL: z.string().url(),
   NATS_URL: z.string().min(1),
   NATS_USER: z.string().min(1),
@@ -60,6 +67,7 @@ function loadEnv(): NotificationServiceConfig {
   const env = parsed.data;
   return {
     logLevel: env.LOG_LEVEL,
+    healthPort: env.NOTIFICATION_HEALTH_PORT,
     databaseUrl: env.NOTIFICATION_DATABASE_URL,
     nats: {
       url: env.NATS_URL,

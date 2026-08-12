@@ -137,6 +137,7 @@ services:
     environment:
       NODE_ENV: development
       LOG_LEVEL: info
+      NOTIFICATION_HEALTH_PORT: 3001
       NOTIFICATION_DATABASE_URL: postgresql://trams:trams@postgres:5432/trams_notifications?schema=public
       NATS_URL: tls://nats:4222
       NATS_USER: notification-service
@@ -156,6 +157,16 @@ services:
     volumes:
       - nats-client-ca:/certs:ro
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://127.0.0.1:3001/health/ready'').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   api-gateway:
     build:
