@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "nats": "^2.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0"
   }
 }
